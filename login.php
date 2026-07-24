@@ -8,11 +8,11 @@ if (Auth::isLoggedIn()) {
 
 $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!Auth::csrfValidate($_POST['csrf'] ?? null)) {
+    if (!Auth::csrfValidate(isset($_POST['csrf']) ? $_POST['csrf'] : null)) {
         $error = 'Session expirée, veuillez réessayer.';
     } else {
-        $u = trim((string) ($_POST['username'] ?? ''));
-        $p = (string) ($_POST['password'] ?? '');
+        $u = trim(isset($_POST['username']) ? $_POST['username'] : '');
+        $p = isset($_POST['password']) ? $_POST['password'] : '';
         if (Auth::check($CONFIG, $u, $p)) {
             Auth::login($u);
             header('Location: index.php');

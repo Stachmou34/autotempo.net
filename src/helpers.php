@@ -1,14 +1,16 @@
 <?php
-declare(strict_types=1);
+/**
+ * Fonctions utilitaires. Compatible PHP 5.6+.
+ */
 
 /** Échappement HTML sûr. */
-function e(?string $value): string
+function e($value)
 {
     return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
 /** Formate un montant en euros. */
-function euros($value): string
+function euros($value)
 {
     if ($value === null || $value === '') {
         return '—';
@@ -17,7 +19,7 @@ function euros($value): string
 }
 
 /** Formate une date (YYYY-MM-DD ou datetime) en JJ/MM/AAAA. */
-function dateFr(?string $value): string
+function dateFr($value)
 {
     if (empty($value)) {
         return '—';
@@ -26,10 +28,20 @@ function dateFr(?string $value): string
     return $ts ? date('d/m/Y', $ts) : e($value);
 }
 
-/** Libellés lisibles pour les statuts de gestion. */
-function statutLabel(string $statut): string
+/** Tronque une chaîne (compatible sans mbstring). */
+function truncate($value, $len)
 {
-    static $labels = [
+    $value = (string) $value;
+    if (function_exists('mb_strimwidth')) {
+        return mb_strimwidth($value, 0, $len, '…', 'UTF-8');
+    }
+    return strlen($value) > $len ? substr($value, 0, $len - 1) . '…' : $value;
+}
+
+/** Libellés lisibles pour les statuts de gestion. */
+function statutLabel($statut)
+{
+    static $labels = array(
         'nouveau'    => 'Nouveau',
         'en_cours'   => 'En cours',
         'valide'     => 'Validé',
@@ -37,12 +49,12 @@ function statutLabel(string $statut): string
         'impaye'     => 'Impayé',
         'resilie'    => 'Résilié',
         'annule'     => 'Annulé',
-    ];
-    return $labels[$statut] ?? ucfirst($statut);
+    );
+    return isset($labels[$statut]) ? $labels[$statut] : ucfirst($statut);
 }
 
 /** Liste des statuts disponibles. */
-function statutsDisponibles(): array
+function statutsDisponibles()
 {
-    return ['nouveau', 'en_cours', 'valide', 'en_attente', 'impaye', 'resilie', 'annule'];
+    return array('nouveau', 'en_cours', 'valide', 'en_attente', 'impaye', 'resilie', 'annule');
 }

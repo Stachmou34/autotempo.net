@@ -1,27 +1,28 @@
 <?php
 require __DIR__ . '/src/bootstrap.php';
-Auth::require();
+Auth::requireLogin();
 
 $repo = new ContractRepository($CONFIG);
 
-$search       = trim((string) ($_GET['q'] ?? ''));
-$statutFilter = (string) ($_GET['statut'] ?? '');
+$search       = trim(isset($_GET['q']) ? $_GET['q'] : '');
+$statutFilter = isset($_GET['statut']) ? $_GET['statut'] : '';
 
 $error = '';
-$rows  = [];
+$rows  = array();
+$stats = array('total' => 0, 'prime_totale' => 0, 'commission_totale' => 0, 'par_statut' => array());
 try {
-    $rows  = $repo->list($search, $statutFilter);
+    $rows  = $repo->listContracts($search, $statutFilter);
     $stats = $repo->stats($rows);
-} catch (Throwable $ex) {
+} catch (Exception $ex) {
     $error = $ex->getMessage();
-    $stats = ['total' => 0, 'prime_totale' => 0, 'commission_totale' => 0, 'par_statut' => []];
 }
 
+$apporteur = isset($CONFIG['app']['apporteur']) ? $CONFIG['app']['apporteur'] : '';
 $pageTitle = 'Contrats — MCJ-Courtage';
 require __DIR__ . '/partials/header.php';
 ?>
 
-<h1>Contrats de l'apporteur <em><?= e($CONFIG['app']['apporteur'] ?? '') ?></em></h1>
+<h1>Contrats de l'apporteur <em><?= e($apporteur) ?></em></h1>
 
 <?php if ($error): ?>
     <div class="alert error">
@@ -36,8 +37,8 @@ require __DIR__ . '/partials/header.php';
     <div class="stat"><span class="num"><?= (int) $stats['total'] ?></span><span class="lbl">Contrats</span></div>
     <div class="stat"><span class="num"><?= e(euros($stats['prime_totale'])) ?></span><span class="lbl">Primes cumulées</span></div>
     <div class="stat"><span class="num"><?= e(euros($stats['commission_totale'])) ?></span><span class="lbl">Commissions</span></div>
-    <div class="stat"><span class="num"><?= (int) ($stats['par_statut']['en_cours'] ?? 0) ?></span><span class="lbl">En cours</span></div>
-    <div class="stat"><span class="num"><?= (int) ($stats['par_statut']['valide'] ?? 0) ?></span><span class="lbl">Validés</span></div>
+    <div class="stat"><span class="num"><?= (int) (isset($stats['par_statut']['en_cours']) ? $stats['par_statut']['en_cours'] : 0) ?></span><span class="lbl">En cours</span></div>
+    <div class="stat"><span class="num"><?= (int) (isset($stats['par_statut']['valide']) ? $stats['par_statut']['valide'] : 0) ?></span><span class="lbl">Validés</span></div>
 </section>
 
 <form class="filters" method="get">
@@ -50,7 +51,7 @@ require __DIR__ . '/partials/header.php';
     </select>
     <button type="submit" class="btn">Filtrer</button>
     <a class="btn btn-ghost" href="index.php">Réinitialiser</a>
-    <a class="btn btn-ghost" href="export.php?format=csv&q=<?= urlencode($search) ?>&statut=<?= urlencode($statutFilter) ?>">⬇ Export CSV</a>
+    <a class="btn btn-ghost" href="export.php?format=csv&amp;q=<?= urlencode($search) ?>&amp;statut=<?= urlencode($statutFilter) ?>">⬇ Export CSV</a>
 </form>
 
 <div class="table-wrap">
@@ -73,12 +74,12 @@ require __DIR__ . '/partials/header.php';
         <tr><td colspan="9" class="empty">Aucun contrat trouvé.</td></tr>
     <?php else: foreach ($rows as $r): $g = $r['gestion']; ?>
         <tr>
-            <td><?= e($r['reference'] ?? $r['_key']) ?></td>
-            <td><?= e(trim(($r['client_nom'] ?? '') . ' ' . ($r['client_prenom'] ?? ''))) ?: '—' ?></td>
-            <td><?= e($r['produit'] ?? '') ?: '—' ?></td>
-            <td><?= e($r['compagnie'] ?? '') ?: '—' ?></td>
-            <td><?= e(dateFr($r['date_effet'] ?? null)) ?></td>
-            <td class="num"><?= e(euros($r['prime'] ?? null)) ?></td>
+            <td><?= e(isset($r['reference']) ? $r['reference'] : $r['_key']) ?></td>
+            <td><?php $nom = trim((isset($r['client_nom']) ? $r['client_nom'] : '') . ' ' . (isset($r['client_prenom']) ? $r['client_prenom'] : '')); echo $nom !== '' ? e($nom) : '—'; ?></td>
+            <td><?= isset($r['produit']) && $r['produit'] !== '' ? e($r['produit']) : '—' ?></td>
+            <td><?= isset($r['compagnie']) && $r['compagnie'] !== '' ? e($r['compagnie']) : '—' ?></td>
+            <td><?= e(dateFr(isset($r['date_effet']) ? $r['date_effet'] : null)) ?></td>
+            <td class="num"><?= e(euros(isset($r['prime']) ? $r['prime'] : null)) ?></td>
             <td class="num"><?= e(euros($g['commission'])) ?></td>
             <td><span class="badge s-<?= e($g['statut']) ?>"><?= e(statutLabel($g['statut'])) ?></span></td>
             <td><a class="btn btn-sm" href="contract.php?ref=<?= urlencode((string) $r['_key']) ?>">Gérer</a></td>

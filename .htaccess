@@ -7,10 +7,20 @@ Options -Indexes
     Header set Referrer-Policy "strict-origin-when-cross-origin"
 </IfModule>
 
-# Bloque l'accès direct aux fichiers sensibles.
-<FilesMatch "(^\.|composer\.(json|lock)|\.md$|\.sql$)">
-    Require all denied
-</FilesMatch>
+# Bloque l'accès direct aux fichiers sensibles (.md, .sql, .gitignore…).
+<IfModule mod_authz_core.c>
+    # Apache 2.4+
+    <FilesMatch "(\.(md|sql|gitignore)$|^_htaccess)">
+        Require all denied
+    </FilesMatch>
+</IfModule>
+<IfModule !mod_authz_core.c>
+    # Apache 2.2
+    <FilesMatch "(\.(md|sql|gitignore)$|^_htaccess)">
+        Order allow,deny
+        Deny from all
+    </FilesMatch>
+</IfModule>
 
-# Page d'accueil = connexion / liste.
-DirectoryIndex index.php
+# Page d'accueil.
+DirectoryIndex index.php index.html
