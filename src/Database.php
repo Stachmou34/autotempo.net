@@ -39,9 +39,12 @@ final class Database
                 PDO::ATTR_EMULATE_PREPARES   => false,
             ));
         } catch (PDOException $e) {
-            http_response_code(500);
             error_log('[MCJ] Connexion DB "' . $key . '" echouee : ' . $e->getMessage());
-            exit('Impossible de se connecter a la base de donnees (' . htmlspecialchars($key) . '). Verifiez config/config.php.');
+            header('Content-Type: text/html; charset=utf-8');
+            echo '<h2 style="font-family:sans-serif;color:#c02b2b">Connexion base de données impossible (' . htmlspecialchars($key) . ')</h2>';
+            echo '<p style="font-family:sans-serif">Vérifiez les identifiants de la base <code>' . htmlspecialchars($key) . '</code> dans <code>config/config.php</code>.</p>';
+            echo '<pre style="background:#fde3e3;padding:12px;border-radius:6px;white-space:pre-wrap">' . htmlspecialchars($e->getMessage()) . '</pre>';
+            exit;
         }
 
         self::$pool[$key] = $pdo;
