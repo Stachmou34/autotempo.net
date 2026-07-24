@@ -1,0 +1,23 @@
+# Configuration réelle (contient les identifiants de base de données) — NE JAMAIS COMMIT
+/config/config.php
+
+# Fichiers d'environnement
+.env
+.env.*
+
+# Dépendances
+/vendor/
+node_modules/
+
+# Fichiers système / éditeurs
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# Logs et exports générés
+/logs/*.log
+/exports/*.csv
+/exports/*.pdf

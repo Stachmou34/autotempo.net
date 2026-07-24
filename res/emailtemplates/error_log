@@ -1,6 +1,0 @@
-[05-Mar-2026 05:52:19 America/Chicago] PHP Fatal error:  Call to a member function get() on null in /home/autotemnet/public_html/res/emailtemplates/digitalshipping.html.template.php on line 8
-[05-Mar-2026 05:52:26 America/Chicago] PHP Fatal error:  Call to a member function get() on null in /home/autotemnet/public_html/res/emailtemplates/digitalshipping.text.template.php on line 3
-[05-Mar-2026 05:52:32 America/Chicago] PHP Fatal error:  Call to a member function get() on null in /home/autotemnet/public_html/res/emailtemplates/order.html.template.php on line 11
-[05-Mar-2026 05:52:39 America/Chicago] PHP Fatal error:  Call to a member function get() on null in /home/autotemnet/public_html/res/emailtemplates/order.text.template.php on line 8
-[05-Mar-2026 05:52:45 America/Chicago] PHP Fatal error:  Call to a member function get() on null in /home/autotemnet/public_html/res/emailtemplates/physicalshipping.html.template.php on line 8
-[05-Mar-2026 05:52:52 America/Chicago] PHP Fatal error:  Call to a member function get() on null in /home/autotemnet/public_html/res/emailtemplates/physicalshipping.text.template.php on line 3
