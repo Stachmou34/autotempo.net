@@ -161,17 +161,17 @@ form.cfg button{background:#1f5eff;color:#fff;border:0;padding:10px 18px;border-
         </table>
 
         <?php
-        // 2) Contrats (jl_pro) de ce(s) apporteur(s) + client + compagnie.
+        // 2) Contrats (jl_garantie) de ce(s) apporteur(s) + client + compagnie.
         $in = implode(',', array_fill(0, count($ids), '?'));
-        $sql = 'SELECT p.id, p.num_contrat, p.num_devis, p.designation,
-                       p.date_effet, p.date_echeance, p.prime, p.com_app, p.status,
+        $sql = 'SELECT g.id, g.num_contrat, g.num_garantie, g.type_contrat, g.formule,
+                       g.date_effet, g.date_fin, g.prix_formule, g.com_app, g.status,
                        cl.nom AS client_nom, cl.prenom AS client_prenom, cl.ville AS client_ville,
                        co.compagnie AS compagnie
-                FROM jl_pro p
-                LEFT JOIN jl_client cl ON p.id_cli = cl.id
-                LEFT JOIN jl_compagnie co ON p.id_comp = co.id
-                WHERE p.id_app IN (' . $in . ')
-                ORDER BY p.date_effet DESC, p.id DESC';
+                FROM jl_garantie g
+                LEFT JOIN jl_client cl ON g.id_cli = cl.id
+                LEFT JOIN jl_compagnie co ON g.id_comp = co.id
+                WHERE g.id_app IN (' . $in . ')
+                ORDER BY g.date_effet DESC, g.id DESC';
         $st = $pdo->prepare($sql);
         $st->execute($ids);
         $contrats = $st->fetchAll();
@@ -179,7 +179,7 @@ form.cfg button{background:#1f5eff;color:#fff;border:0;padding:10px 18px;border-
         $nb = count($contrats);
         $totPrime = 0; $totCom = 0;
         foreach ($contrats as $c) {
-            $totPrime += (float) str_replace(array(' ', ','), array('', '.'), $c['prime']);
+            $totPrime += (float) str_replace(array(' ', ','), array('', '.'), $c['prix_formule']);
             $totCom   += (float) str_replace(array(' ', ','), array('', '.'), $c['com_app']);
         }
         ?>
@@ -198,20 +198,21 @@ form.cfg button{background:#1f5eff;color:#fff;border:0;padding:10px 18px;border-
         <table>
             <thead><tr>
                 <th>N° contrat</th><th>Client</th><th>Ville</th><th>Compagnie</th>
-                <th>Désignation</th><th>Date effet</th><th>Échéance</th>
+                <th>Type</th><th>Formule</th><th>Date effet</th><th>Date fin</th>
                 <th class="num">Prime</th><th class="num">Com. app.</th><th>Statut</th>
             </tr></thead>
             <tbody>
             <?php foreach ($contrats as $c): ?>
                 <tr>
-                    <td><?php echo h($c['num_contrat'] !== '' && $c['num_contrat'] !== null ? $c['num_contrat'] : $c['num_devis']); ?></td>
+                    <td><?php echo h($c['num_contrat'] !== '' && $c['num_contrat'] !== null ? $c['num_contrat'] : $c['num_garantie']); ?></td>
                     <td><?php echo h(trim($c['client_nom'] . ' ' . $c['client_prenom'])); ?></td>
                     <td><?php echo h($c['client_ville']); ?></td>
                     <td><?php echo h($c['compagnie']); ?></td>
-                    <td><?php echo h($c['designation']); ?></td>
+                    <td><?php echo h($c['type_contrat']); ?></td>
+                    <td><?php echo h($c['formule']); ?></td>
                     <td><?php echo dateFr($c['date_effet']); ?></td>
-                    <td><?php echo dateFr($c['date_echeance']); ?></td>
-                    <td class="num"><?php echo euros($c['prime']); ?></td>
+                    <td><?php echo dateFr($c['date_fin']); ?></td>
+                    <td class="num"><?php echo euros($c['prix_formule']); ?></td>
                     <td class="num"><?php echo euros($c['com_app']); ?></td>
                     <td><?php echo h($c['status']); ?></td>
                 </tr>
@@ -222,7 +223,7 @@ form.cfg button{background:#1f5eff;color:#fff;border:0;padding:10px 18px;border-
         <?php endif; ?>
     <?php endif; ?>
 
-    <p class="tools">Outil : <a href="?t=jl_pro">structure jl_pro</a> · <a href="?t=jl_app">jl_app</a> · <a href="?t=jl_client">jl_client</a></p>
+    <p class="tools">Outil : <a href="?t=jl_garantie">structure jl_garantie</a> · <a href="?t=jl_app">jl_app</a> · <a href="?t=jl_client">jl_client</a></p>
 
 <?php endif; ?>
 
