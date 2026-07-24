@@ -1,0 +1,6 @@
+User-agent: *
+Disallow: /admin
+Disallow: /captcha
+Disallow: /imemail
+
+Sitemap: https://autotempo.net/sitemap.xml
