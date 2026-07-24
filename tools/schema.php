@@ -4,30 +4,33 @@
  * Liste les tables et colonnes de la base JLASSURE afin d'ajuster
  * le `jlassure_mapping` dans config/config.php.
  *
- * Accès réservé aux utilisateurs connectés.
+ * Accès réservé aux utilisateurs connectés. Compatible PHP 5.6+.
  */
 require __DIR__ . '/../src/bootstrap.php';
-Auth::require();
+Auth::requireLogin();
 
 $pdo = Database::jlassure($CONFIG);
-$selectedTable = (string) ($_GET['table'] ?? '');
+$selectedTable = isset($_GET['table']) ? $_GET['table'] : '';
 
-$tables = [];
+$err = '';
+$tables = array();
 try {
     foreach ($pdo->query('SHOW TABLES') as $row) {
-        $tables[] = array_values($row)[0];
+        $vals = array_values($row);
+        $tables[] = $vals[0];
     }
-} catch (Throwable $e) {
+} catch (Exception $e) {
     $err = $e->getMessage();
 }
 
-$columns = [];
-$sample = [];
+$columns = array();
+$sample = array();
 if ($selectedTable !== '' && in_array($selectedTable, $tables, true)) {
-    foreach ($pdo->query('SHOW COLUMNS FROM `' . str_replace('`', '', $selectedTable) . '`') as $col) {
+    $safe = str_replace('`', '', $selectedTable);
+    foreach ($pdo->query('SHOW COLUMNS FROM `' . $safe . '`') as $col) {
         $columns[] = $col;
     }
-    $stmt = $pdo->query('SELECT * FROM `' . str_replace('`', '', $selectedTable) . '` LIMIT 3');
+    $stmt = $pdo->query('SELECT * FROM `' . $safe . '` LIMIT 3');
     $sample = $stmt->fetchAll();
 }
 
@@ -39,7 +42,7 @@ require __DIR__ . '/../partials/header.php';
 <p class="hint">Repérez la table des contrats et les noms de colonnes réels,
 puis reportez-les dans <code>config/config.php → jlassure_mapping</code>.</p>
 
-<?php if (!empty($err)): ?>
+<?php if ($err !== ''): ?>
     <div class="alert error"><?= e($err) ?></div>
 <?php endif; ?>
 
@@ -79,7 +82,7 @@ puis reportez-les dans <code>config/config.php → jlassure_mapping</code>.</p>
                     <thead><tr><?php foreach (array_keys($sample[0]) as $k): ?><th><?= e($k) ?></th><?php endforeach; ?></tr></thead>
                     <tbody>
                     <?php foreach ($sample as $line): ?>
-                        <tr><?php foreach ($line as $v): ?><td><?= e(mb_strimwidth((string) $v, 0, 40, '…')) ?></td><?php endforeach; ?></tr>
+                        <tr><?php foreach ($line as $v): ?><td><?= e(truncate($v, 40)) ?></td><?php endforeach; ?></tr>
                     <?php endforeach; ?>
                     </tbody>
                 </table>

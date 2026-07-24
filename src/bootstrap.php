@@ -2,8 +2,9 @@
 /**
  * Amorçage commun : chargement de la config, connexions PDO, session.
  * Inclus au début de chaque page.
+ *
+ * Compatible PHP 5.6+.
  */
-declare(strict_types=1);
 
 // Affichage des erreurs uniquement en développement (désactivé par défaut).
 error_reporting(E_ALL);
@@ -18,7 +19,8 @@ if (!is_file($configFile)) {
 /** @var array $CONFIG */
 $CONFIG = require $configFile;
 
-date_default_timezone_set($CONFIG['app']['timezone'] ?? 'Europe/Paris');
+$tz = isset($CONFIG['app']['timezone']) ? $CONFIG['app']['timezone'] : 'Europe/Paris';
+date_default_timezone_set($tz);
 
 require __DIR__ . '/Database.php';
 require __DIR__ . '/Auth.php';
