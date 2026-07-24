@@ -1,93 +1,41 @@
 <?php
-require __DIR__ . '/src/bootstrap.php';
-Auth::requireLogin();
+// Étape 1 — Test PHP minimal.
+header('Content-Type: text/html; charset=utf-8');
+?><!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Étape 1 — Test PHP</title>
+<style>
+body{font-family:system-ui,Arial,sans-serif;max-width:640px;margin:40px auto;padding:0 16px;line-height:1.6;color:#222}
+h1{color:#1a9c5b} code{background:#eef;padding:2px 6px;border-radius:4px}
+li.ok{color:#1a7d49} li.no{color:#c02b2b;font-weight:bold}
+.box{background:#f6f8fc;border:1px solid #dde3ee;border-radius:8px;padding:14px 18px;margin-top:22px}
+</style></head>
+<body>
 
-$repo = new ContractRepository($CONFIG);
+<h1>✅ Étape 1 — PHP fonctionne</h1>
+<p>Si tu vois cette page, le serveur exécute bien PHP.</p>
 
-$search       = trim(isset($_GET['q']) ? $_GET['q'] : '');
-$statutFilter = isset($_GET['statut']) ? $_GET['statut'] : '';
+<ul>
+  <li>Version PHP : <code><?php echo phpversion(); ?></code></li>
+  <li>Date serveur : <code><?php echo date('Y-m-d H:i:s'); ?></code></li>
+  <li>Serveur : <code><?php echo isset($_SERVER['SERVER_SOFTWARE']) ? htmlspecialchars($_SERVER['SERVER_SOFTWARE']) : '?'; ?></code></li>
+  <li>Dossier : <code><?php echo htmlspecialchars(__DIR__); ?></code></li>
+</ul>
 
-$error = '';
-$rows  = array();
-$stats = array('total' => 0, 'prime_totale' => 0, 'commission_totale' => 0, 'par_statut' => array());
-try {
-    $rows  = $repo->listContracts($search, $statutFilter);
-    $stats = $repo->stats($rows);
-} catch (Exception $ex) {
-    $error = $ex->getMessage();
+<h2>Extensions requises</h2>
+<ul>
+<?php
+foreach (array('pdo', 'pdo_mysql', 'mbstring', 'openssl', 'session') as $ext) {
+    $ok = extension_loaded($ext);
+    echo '<li class="' . ($ok ? 'ok' : 'no') . '">' . $ext . ' : ' . ($ok ? 'OK' : 'MANQUANT') . "</li>\n";
 }
-
-$apporteur = isset($CONFIG['app']['apporteur']) ? $CONFIG['app']['apporteur'] : '';
-$pageTitle = 'Contrats — MCJ-Courtage';
-require __DIR__ . '/partials/header.php';
 ?>
+</ul>
 
-<h1>Contrats de l'apporteur <em><?= e($apporteur) ?></em></h1>
-
-<?php if ($error): ?>
-    <div class="alert error">
-        <strong>Erreur de récupération des contrats.</strong><br>
-        <?= e($error) ?><br>
-        <small>Vérifiez le mapping des colonnes dans <code>config/config.php</code>.
-        Utilisez <a href="tools/schema.php">l'outil de découverte du schéma</a> pour lister les tables et colonnes réelles de JLASSURE.</small>
-    </div>
-<?php else: ?>
-
-<section class="stats">
-    <div class="stat"><span class="num"><?= (int) $stats['total'] ?></span><span class="lbl">Contrats</span></div>
-    <div class="stat"><span class="num"><?= e(euros($stats['prime_totale'])) ?></span><span class="lbl">Primes cumulées</span></div>
-    <div class="stat"><span class="num"><?= e(euros($stats['commission_totale'])) ?></span><span class="lbl">Commissions</span></div>
-    <div class="stat"><span class="num"><?= (int) (isset($stats['par_statut']['en_cours']) ? $stats['par_statut']['en_cours'] : 0) ?></span><span class="lbl">En cours</span></div>
-    <div class="stat"><span class="num"><?= (int) (isset($stats['par_statut']['valide']) ? $stats['par_statut']['valide'] : 0) ?></span><span class="lbl">Validés</span></div>
-</section>
-
-<form class="filters" method="get">
-    <input type="search" name="q" value="<?= e($search) ?>" placeholder="Rechercher (client, référence, produit…)">
-    <select name="statut">
-        <option value="">Tous les statuts</option>
-        <?php foreach (statutsDisponibles() as $s): ?>
-            <option value="<?= e($s) ?>" <?= $statutFilter === $s ? 'selected' : '' ?>><?= e(statutLabel($s)) ?></option>
-        <?php endforeach; ?>
-    </select>
-    <button type="submit" class="btn">Filtrer</button>
-    <a class="btn btn-ghost" href="index.php">Réinitialiser</a>
-    <a class="btn btn-ghost" href="export.php?format=csv&amp;q=<?= urlencode($search) ?>&amp;statut=<?= urlencode($statutFilter) ?>">⬇ Export CSV</a>
-</form>
-
-<div class="table-wrap">
-<table class="grid">
-    <thead>
-        <tr>
-            <th>Référence</th>
-            <th>Client</th>
-            <th>Produit</th>
-            <th>Compagnie</th>
-            <th>Date effet</th>
-            <th class="num">Prime</th>
-            <th class="num">Commission</th>
-            <th>Statut</th>
-            <th></th>
-        </tr>
-    </thead>
-    <tbody>
-    <?php if (!$rows): ?>
-        <tr><td colspan="9" class="empty">Aucun contrat trouvé.</td></tr>
-    <?php else: foreach ($rows as $r): $g = $r['gestion']; ?>
-        <tr>
-            <td><?= e(isset($r['reference']) ? $r['reference'] : $r['_key']) ?></td>
-            <td><?php $nom = trim((isset($r['client_nom']) ? $r['client_nom'] : '') . ' ' . (isset($r['client_prenom']) ? $r['client_prenom'] : '')); echo $nom !== '' ? e($nom) : '—'; ?></td>
-            <td><?= isset($r['produit']) && $r['produit'] !== '' ? e($r['produit']) : '—' ?></td>
-            <td><?= isset($r['compagnie']) && $r['compagnie'] !== '' ? e($r['compagnie']) : '—' ?></td>
-            <td><?= e(dateFr(isset($r['date_effet']) ? $r['date_effet'] : null)) ?></td>
-            <td class="num"><?= e(euros(isset($r['prime']) ? $r['prime'] : null)) ?></td>
-            <td class="num"><?= e(euros($g['commission'])) ?></td>
-            <td><span class="badge s-<?= e($g['statut']) ?>"><?= e(statutLabel($g['statut'])) ?></span></td>
-            <td><a class="btn btn-sm" href="contract.php?ref=<?= urlencode((string) $r['_key']) ?>">Gérer</a></td>
-        </tr>
-    <?php endforeach; endif; ?>
-    </tbody>
-</table>
+<div class="box">
+  <strong>Prochaine étape :</strong> ajouter la connexion à la base de données,
+  puis l'authentification, puis la liste des contrats REYNARD — une étape à la fois.
 </div>
 
-<?php endif; ?>
-<?php require __DIR__ . '/partials/footer.php'; ?>
+</body>
+</html>
