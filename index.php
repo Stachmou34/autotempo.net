@@ -514,6 +514,8 @@ if ($vue === 'renouvellements') {
         $sql = 'SELECT g.id AS gid, g.id_app, g.id_vehi, g.id_cli, g.num_contrat, g.type_contrat, g.formule, g.duree,
                        g.date_effet, g.date_fin, g.date_demande, g.prix_formule, r.etat AS etat,
                        cl.nom AS client_nom, cl.prenom AS client_prenom, cl.ville AS client_ville,
+                       cl.telephone AS client_tel, cl.mobile AS client_mobile, cl.mail AS client_mail,
+                       cl.adresse AS client_adresse, cl.code_postal AS client_cp,
                        v.immatriculation, v.marque, v.modele
                 FROM jl_garantie g
                 LEFT JOIN jl_client cl ON cl.id = g.id_cli
@@ -559,12 +561,15 @@ if ($vue === 'renouvellements') {
                 $parClient[$cid] = array(
                     'client' => trim($r['client_nom'] . ' ' . $r['client_prenom']),
                     'ville' => $r['client_ville'], 'societe' => $soc,
-                    'nb' => 0, 'vehs' => array(), 'total' => 0,
+                    'tel' => $r['client_tel'], 'mobile' => $r['client_mobile'], 'mail' => $r['client_mail'],
+                    'adresse' => trim($r['client_adresse'] . ' ' . $r['client_cp'] . ' ' . $r['client_ville']),
+                    'nb' => 0, 'vehs' => array(), 'total' => 0, 'contrats' => array(),
                 );
             }
             $parClient[$cid]['nb']++;
             if ($k > 0) { $parClient[$cid]['vehs'][$k] = 1; }
             $parClient[$cid]['total'] += num($r['prix_formule']);
+            $parClient[$cid]['contrats'][] = $r;
         }
     }
 
@@ -631,6 +636,7 @@ if ($vue === 'renouvellements') {
     <?php if (!$fideles): ?>
         <p class="muted">Aucun client avec plusieurs contrats sur cette période.</p>
     <?php else: ?>
+    <p class="muted" style="margin-top:0">Clique sur un client pour afficher ses coordonnées et ses contrats.</p>
     <div style="overflow:auto">
     <table>
         <thead><tr>
@@ -638,19 +644,48 @@ if ($vue === 'renouvellements') {
             <th class="ctr">Nb contrats</th><th class="ctr">Nb véhicules</th><th class="num">Primes cumulées</th>
         </tr></thead>
         <tbody>
-        <?php foreach ($fideles as $c): ?>
-            <tr>
-                <td><strong><?php echo h($c['client']); ?></strong></td>
+        <?php foreach ($fideles as $i => $c): ?>
+            <tr onclick="toggleCli(<?php echo $i; ?>)" style="cursor:pointer">
+                <td>▸ <strong><?php echo h($c['client']); ?></strong></td>
                 <td><?php echo h($c['ville']); ?></td>
                 <td><?php echo h($c['societe']); ?></td>
                 <td class="ctr"><strong style="color:#1f5eff"><?php echo $c['nb']; ?></strong></td>
                 <td class="ctr"><?php echo count($c['vehs']); ?></td>
                 <td class="num"><?php echo euros($c['total']); ?></td>
             </tr>
+            <tr id="cli-<?php echo $i; ?>" style="display:none">
+                <td colspan="6" style="background:#f9fbff;padding:12px 16px">
+                    <div style="margin-bottom:10px">
+                        <strong>Coordonnées</strong> &nbsp;|&nbsp;
+                        📞 <?php echo $c['tel'] !== '' && $c['tel'] !== null ? '<a href="tel:' . h($c['tel']) . '">' . h($c['tel']) . '</a>' : '<span class="muted">—</span>'; ?>
+                        &nbsp; 📱 <?php echo $c['mobile'] !== '' && $c['mobile'] !== null ? '<a href="tel:' . h($c['mobile']) . '">' . h($c['mobile']) . '</a>' : '<span class="muted">—</span>'; ?>
+                        &nbsp; ✉️ <?php echo $c['mail'] !== '' && $c['mail'] !== null ? '<a href="mailto:' . h($c['mail']) . '">' . h($c['mail']) . '</a>' : '<span class="muted">—</span>'; ?>
+                        <?php echo $c['adresse'] !== '' ? '<br>🏠 ' . h($c['adresse']) : ''; ?>
+                    </div>
+                    <table style="margin-top:4px">
+                        <thead><tr><th>Date</th><th>N° contrat</th><th>Véhicule</th><th>Produit</th><th class="num">Prime</th></tr></thead>
+                        <tbody>
+                        <?php foreach ($c['contrats'] as $ct):
+                            $veh = trim($ct['marque'] . ' ' . $ct['modele']); ?>
+                            <tr>
+                                <td><?php echo dateFr($ct['date_demande']); ?></td>
+                                <td><?php echo h($ct['num_contrat']); ?></td>
+                                <td><?php echo h($ct['immatriculation']); ?><?php echo $veh !== '' ? ' <span class="muted">' . h($veh) . '</span>' : ''; ?></td>
+                                <td><?php echo h($ct['type_contrat'] . ' ' . $ct['formule']); ?></td>
+                                <td class="num"><?php echo euros(num($ct['prix_formule'])); ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </td>
+            </tr>
         <?php endforeach; ?>
         </tbody>
     </table>
     </div>
+    <script>
+    function toggleCli(i){ var e=document.getElementById('cli-'+i); if(e){ e.style.display = (e.style.display==='none') ? '' : 'none'; } }
+    </script>
     <?php endif; ?>
 
     <p class="tools">Contrat annulé = règlement principal en état « A ». <a href="?t=jl_garantie">jl_garantie</a> · <a href="?t=jl_vehicule">jl_vehicule</a></p>
