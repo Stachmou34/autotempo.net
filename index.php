@@ -640,6 +640,11 @@ if ($vue === 'renouvellements') {
         }
         csvOut('clients_fideles.csv', $csv);
     }
+    // Sous-vue choisie (bascule) : même véhicule OU par nombre de contrats
+    $sous = (isset($_GET['sous']) && $_GET['sous'] === 'clients') ? 'clients' : 'vehicule';
+    $baseQ = $_GET; unset($baseQ['export']);
+    $lienVeh = '?' . http_build_query(array_merge($baseQ, array('vue' => 'renouvellements', 'sous' => 'vehicule')));
+    $lienCli = '?' . http_build_query(array_merge($baseQ, array('vue' => 'renouvellements', 'sous' => 'clients')));
     ?>
     <p class="muted"><?php echo h($LABEL); ?> — souscriptions du <?php echo dateFr($date_deb); ?> au <?php echo dateFr($date_fin); ?> (contrats annulés exclus).</p>
     <div class="stats">
@@ -649,6 +654,12 @@ if ($vue === 'renouvellements') {
         <div class="stat"><b><?php echo euros($totPrime); ?></b><span>Primes cumulées (véhicule)</span></div>
     </div>
 
+    <div style="display:inline-flex;border:1px solid #ccd4e2;border-radius:8px;overflow:hidden;margin:6px 0 4px;font-weight:600">
+        <a href="<?php echo h($lienVeh); ?>" style="padding:9px 18px;text-decoration:none;<?php echo $sous === 'vehicule' ? 'background:#1f5eff;color:#fff' : 'color:#1f5eff;background:#fff'; ?>">🚗 Même véhicule (<?php echo $nbVeh; ?>)</a>
+        <a href="<?php echo h($lienCli); ?>" style="padding:9px 18px;text-decoration:none;border-left:1px solid #ccd4e2;<?php echo $sous === 'clients' ? 'background:#1f5eff;color:#fff' : 'color:#1f5eff;background:#fff'; ?>">👥 Par nombre de contrats (<?php echo count($fideles); ?>)</a>
+    </div>
+
+    <?php if ($sous === 'vehicule'): ?>
     <h2>Renouvellements — même véhicule</h2>
     <p><a href="<?php echo h(lienCsv(array('export' => 'vehicules'))); ?>" style="display:inline-block;background:#1a7d49;color:#fff;padding:7px 13px;border-radius:6px;text-decoration:none;font-size:14px">⬇ Exporter (véhicules)</a></p>
     <?php if (!$multi): ?>
@@ -689,7 +700,9 @@ if ($vue === 'renouvellements') {
     </table>
     </div>
     <?php endif; ?>
+    <?php endif; /* fin sous=vehicule */ ?>
 
+    <?php if ($sous === 'clients'): ?>
     <h2>Clients fidèles — plusieurs contrats (véhicule différent ou non)</h2>
     <p><a href="<?php echo h(lienCsv()); ?>" style="display:inline-block;background:#1a7d49;color:#fff;padding:7px 13px;border-radius:6px;text-decoration:none;font-size:14px">⬇ Exporter (clients fidèles)</a></p>
     <?php if (!$fideles): ?>
@@ -746,6 +759,7 @@ if ($vue === 'renouvellements') {
     function toggleCli(i){ var e=document.getElementById('cli-'+i); if(e){ e.style.display = (e.style.display==='none') ? '' : 'none'; } }
     </script>
     <?php endif; ?>
+    <?php endif; /* fin sous=clients */ ?>
 
     <p class="tools">Contrat annulé = règlement principal en état « A ». <a href="?t=jl_garantie">jl_garantie</a> · <a href="?t=jl_vehicule">jl_vehicule</a></p>
     </body></html>
