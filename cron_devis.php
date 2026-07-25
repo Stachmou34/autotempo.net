@@ -24,12 +24,15 @@ if ($last === 0) {
 }
 
 // Nouvelles garanties depuis le dernier id vu.
-$sql = "SELECT g.id, g.num_garantie, g.num_contrat, g.type_contrat, g.formule, g.date_demande, g.prix_formule,
+$sql = "SELECT g.id, g.id_app, g.num_garantie, g.num_contrat, g.type_contrat, g.formule, g.date_demande,
+               g.prix_assitance, g.prix_pj, g.id_lb2,
+               r.note3, r.pa, r.marge AS r_marge, r.honoraire AS r_hono, r.etat,
                cl.nom AS cnom, cl.prenom AS cprenom, cl.ville AS cville, cl.mobile AS cmobile, cl.mail AS cmail,
                v.immatriculation AS immat, v.marque AS marque, v.modele AS modele
         FROM jl_garantie g
         LEFT JOIN jl_client cl ON cl.id = g.id_cli
         LEFT JOIN jl_vehicule v ON v.id = g.id_vehi
+        LEFT JOIN jl_reglement r ON r.id = g.id_reglement
         WHERE g.id_app IN ($in) AND g.id > ? ORDER BY g.id";
 $st = $pdo->prepare($sql);
 $params = $ids; $params[] = $last;
@@ -39,29 +42,36 @@ $news = $st->fetchAll();
 if (!$news) { logCron('cron_devis', 'Aucun nouveau devis (dernier id vu = ' . $last . ')'); exit(0); }
 
 $lignes = '';
+$totRetro = 0;
 foreach ($news as $d) {
     $estContrat = ($d['num_contrat'] !== '' && $d['num_contrat'] !== null);
     $type = $estContrat ? 'Contrat' : 'Devis';
     $badge = $estContrat ? '#1a7d49' : '#d98a00';
     $veh = trim($d['marque'] . ' ' . $d['modele']);
+    $mb = isset($apInfo[(int) $d['id_app']]) ? $apInfo[(int) $d['id_app']]['mb'] : 0;
+    $soc = isset($apInfo[(int) $d['id_app']]) ? $apInfo[(int) $d['id_app']]['societe'] : '';
+    $retro = retroContrat($d, $mb);
+    $totRetro += $retro;
     $lignes .= '<tr>'
         . '<td style="border:1px solid #ddd;padding:6px"><b style="color:' . $badge . '">' . $type . '</b></td>'
         . '<td style="border:1px solid #ddd;padding:6px">' . hh(dfr($d['date_demande'])) . '</td>'
+        . '<td style="border:1px solid #ddd;padding:6px">' . hh($soc) . '</td>'
         . '<td style="border:1px solid #ddd;padding:6px">' . hh(trim($d['cnom'] . ' ' . $d['cprenom'])) . '<br><span style="color:#666">' . hh($d['cville']) . '</span></td>'
         . '<td style="border:1px solid #ddd;padding:6px">' . hh($d['cmobile']) . '<br>' . hh($d['cmail']) . '</td>'
         . '<td style="border:1px solid #ddd;padding:6px">' . hh($d['immat']) . ($veh !== '' ? '<br><span style="color:#666">' . hh($veh) . '</span>' : '') . '</td>'
         . '<td style="border:1px solid #ddd;padding:6px">' . hh($d['type_contrat']) . ' ' . hh($d['formule']) . '</td>'
-        . '<td style="border:1px solid #ddd;padding:6px;text-align:right">' . eur($d['prix_formule']) . '</td>'
+        . '<td style="border:1px solid #ddd;padding:6px;text-align:right">' . eur($retro) . '</td>'
         . '</tr>';
 }
 
-$corps = '<p>' . count($news) . ' nouvelle(s) demande(s) pour MCJ-Courtage :</p>'
+$corps = '<p>' . count($news) . ' nouvelle(s) demande(s) pour MCJ-Courtage — rétro globale : <b>' . eur($totRetro) . '</b></p>'
     . '<table style="border-collapse:collapse;font-size:13px">'
     . '<tr style="background:#f7f9fd">'
     . '<th style="border:1px solid #ddd;padding:6px">Type</th><th style="border:1px solid #ddd;padding:6px">Date</th>'
+    . '<th style="border:1px solid #ddd;padding:6px">Société</th>'
     . '<th style="border:1px solid #ddd;padding:6px">Client</th><th style="border:1px solid #ddd;padding:6px">Contact</th>'
     . '<th style="border:1px solid #ddd;padding:6px">Véhicule</th><th style="border:1px solid #ddd;padding:6px">Produit</th>'
-    . '<th style="border:1px solid #ddd;padding:6px">Prime</th></tr>'
+    . '<th style="border:1px solid #ddd;padding:6px">Rétro globale</th></tr>'
     . $lignes . '</table>';
 
 $sujet = count($news) . ' nouveau(x) devis MCJ-Courtage';
