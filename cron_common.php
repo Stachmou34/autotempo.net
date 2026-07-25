@@ -30,12 +30,38 @@ try {
     fwrite(STDERR, 'Connexion DB : ' . $e->getMessage() . "\n"); exit(1);
 }
 
-// ── Apporteur REYNARD ─────────────────────────────────────────────
+// ── Apporteur REYNARD (id, société, marque blanche) ───────────────
 $APPORTEUR = 'REYNARD';
-$stmt = $pdo->prepare('SELECT id FROM jl_app WHERE nom LIKE :q OR prenom LIKE :q OR societe LIKE :q');
+$stmt = $pdo->prepare('SELECT id, nom, prenom, societe, commentaire FROM jl_app WHERE nom LIKE :q OR prenom LIKE :q OR societe LIKE :q');
 $stmt->execute(array(':q' => '%' . $APPORTEUR . '%'));
-$ids = array();
-foreach ($stmt->fetchAll() as $a) { $ids[] = (int) $a['id']; }
+$ids = array(); $apInfo = array();
+foreach ($stmt->fetchAll() as $a) {
+    $id = (int) $a['id']; $ids[] = $id;
+    $com = explode('|', (string) $a['commentaire']);
+    $soc = ($a['societe'] !== '' && $a['societe'] !== null) ? $a['societe'] : trim($a['nom'] . ' ' . $a['prenom']);
+    $apInfo[$id] = array('mb' => (isset($com[2]) && $com[2] == '1') ? 1 : 0, 'societe' => $soc);
+}
+
+/** Parse un nombre "1 234,56" -> float. */
+function numv($v) { return (float) str_replace(array(' ', ','), array('', '.'), (string) $v); }
+
+/**
+ * Rétro globale d'un contrat (RC DR + honoraires), même calcul que le bordereau.
+ * $r doit contenir : note3, pa, r_marge, r_hono, prix_assitance, prix_pj, id_lb2, etat.
+ */
+function retroContrat($r, $mb) {
+    $etat = isset($r['etat']) ? $r['etat'] : '';
+    $montant = numv(isset($r['note3']) ? $r['note3'] : 0);
+    if ($etat === 'A' || $etat === 'R') { $montant = 0; }
+    $prime_esc = numv(isset($r['pa']) ? $r['pa'] : 0);
+    $pv = $prime_esc + numv(isset($r['r_marge']) ? $r['r_marge'] : 0) + numv(isset($r['r_hono']) ? $r['r_hono'] : 0);
+    $prix_ass = numv(isset($r['prix_assitance']) ? $r['prix_assitance'] : 0);
+    $prix_dr = numv(isset($r['prix_pj']) ? $r['prix_pj'] : 0);
+    if ($mb == 1) { $rcdr = round(($pv - $prime_esc) * 0.4764, 2); $hono = round(numv(isset($r['id_lb2']) ? $r['id_lb2'] : 0), 2); }
+    else          { $rcdr = round($montant - $pv - $prix_ass - $prix_dr, 2); $hono = 0; }
+    if ($rcdr <= 0) { $rcdr = 0; } if ($hono <= 0) { $hono = 0; }
+    return $rcdr + $hono;
+}
 
 // ── Utilitaires ───────────────────────────────────────────────────
 function hh($s) { return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'); }
