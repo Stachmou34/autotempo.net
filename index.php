@@ -231,7 +231,7 @@ echo '<p class="muted">Sociétés : <strong>' . h(implode(' · ', $societes)) . 
 
 // Vue courante (BI)
 $vue = isset($_GET['vue']) ? $_GET['vue'] : 'bordereau';
-if (!in_array($vue, array('bordereau', 'renouvellements', 'production'), true)) { $vue = 'bordereau'; }
+if (!in_array($vue, array('bordereau', 'production', 'devis', 'renouvellements'), true)) { $vue = 'bordereau'; }
 $annee = (isset($_GET['annee']) && preg_match('/^\d{4}$/', $_GET['annee'])) ? (int) $_GET['annee'] : (int) date('Y');
 
 // Filtres : etat, tri, periode, societe
@@ -256,6 +256,7 @@ if ($soc_filtre !== 'TOUTES') {
 echo '<div class="nav">'
    . '<a href="?vue=bordereau"' . ($vue === 'bordereau' ? ' class="on"' : '') . '>Bordereau rétrocession</a>'
    . '<a href="?vue=production"' . ($vue === 'production' ? ' class="on"' : '') . '>Production</a>'
+   . '<a href="?vue=devis"' . ($vue === 'devis' ? ' class="on"' : '') . '>Devis</a>'
    . '<a href="?vue=renouvellements"' . ($vue === 'renouvellements' ? ' class="on"' : '') . '>Renouvellements</a>'
    . '</div>';
 
@@ -423,6 +424,78 @@ if ($vue === 'production') {
         });
     })();
     </script>
+    </body></html>
+    <?php
+    exit;
+}
+
+// =================================================================
+//  VUE DEVIS (demandes non transformées en contrat)
+// =================================================================
+if ($vue === 'devis') {
+    if (!$idsUsed) {
+        $rows = array();
+    } else {
+        $in = implode(',', array_fill(0, count($idsUsed), '?'));
+        $sql = "SELECT g.id, g.id_app, g.num_garantie, g.type_contrat, g.formule, g.date_demande, g.date_effet, g.prix_formule,
+                       cl.nom AS cnom, cl.prenom AS cprenom, cl.ville AS cville, cl.mobile AS cmobile, cl.mail AS cmail,
+                       v.immatriculation AS immat, v.marque AS marque, v.modele AS modele
+                FROM jl_garantie g
+                LEFT JOIN jl_client cl ON cl.id = g.id_cli
+                LEFT JOIN jl_vehicule v ON v.id = g.id_vehi
+                WHERE g.id_app IN ($in) AND (g.num_contrat = '' OR g.num_contrat IS NULL)
+                      AND DATE(g.date_demande) BETWEEN ? AND ?
+                ORDER BY g.date_demande DESC, g.id DESC";
+        $st = $pdo->prepare($sql);
+        $params = $idsUsed; $params[] = $date_deb; $params[] = $date_fin;
+        $st->execute($params);
+        $rows = $st->fetchAll();
+    }
+
+    $aujourdhui = strtotime(date('Y-m-d'));
+    $totPrime = 0;
+    foreach ($rows as $r) { $totPrime += num($r['prix_formule']); }
+    ?>
+    <p class="muted">Devis <?php echo h($LABEL); ?> (demandes sans n° de contrat) du
+       <?php echo dateFr($date_deb); ?> au <?php echo dateFr($date_fin); ?>.</p>
+    <div class="stats">
+        <div class="stat"><b><?php echo count($rows); ?></b><span>Devis en attente</span></div>
+        <div class="stat"><b><?php echo euros($totPrime); ?></b><span>Primes potentielles</span></div>
+    </div>
+
+    <?php if (!$rows): ?>
+        <p class="muted">Aucun devis en attente sur cette période.</p>
+    <?php else: ?>
+    <div style="overflow:auto">
+    <table>
+        <thead><tr>
+            <th>Date</th><th>N° devis</th><th>Client</th><th>Ville</th><th>Contact</th>
+            <th>Véhicule</th><th>Produit</th><th class="num">Prime</th><th class="ctr">Ancienneté</th>
+        </tr></thead>
+        <tbody>
+        <?php foreach ($rows as $r):
+            $veh = trim($r['marque'] . ' ' . $r['modele']);
+            $age = floor(($aujourdhui - strtotime($r['date_demande'])) / 86400);
+            $bg = ($age > 7) ? '#fff2d9' : '#fff';
+        ?>
+            <tr style="background:<?php echo $bg; ?>">
+                <td><?php echo dateFr($r['date_demande']); ?></td>
+                <td><?php echo h($r['num_garantie']); ?></td>
+                <td><?php echo h(trim($r['cnom'] . ' ' . $r['cprenom'])); ?></td>
+                <td><?php echo h($r['cville']); ?></td>
+                <td><?php echo h($r['cmobile']); ?><?php echo ($r['cmail'] !== '' && $r['cmail'] !== null) ? '<br><span class="muted">' . h($r['cmail']) . '</span>' : ''; ?></td>
+                <td><?php echo h($r['immat']); ?><?php echo $veh !== '' ? ' <span class="muted">' . h($veh) . '</span>' : ''; ?></td>
+                <td><?php echo h($r['type_contrat'] . ' ' . $r['formule']); ?></td>
+                <td class="num"><?php echo euros(num($r['prix_formule'])); ?></td>
+                <td class="ctr"><?php echo (int) $age; ?> j</td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+    </div>
+    <?php endif; ?>
+
+    <p class="tools">Devis = garanties sans <code>num_contrat</code>. <a href="?t=jl_garantie">jl_garantie</a></p>
     </body></html>
     <?php
     exit;
