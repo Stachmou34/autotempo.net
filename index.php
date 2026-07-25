@@ -231,7 +231,8 @@ echo '<p class="muted">Sociétés : <strong>' . h(implode(' · ', $societes)) . 
 
 // Vue courante (BI)
 $vue = isset($_GET['vue']) ? $_GET['vue'] : 'bordereau';
-if (!in_array($vue, array('bordereau', 'renouvellements'), true)) { $vue = 'bordereau'; }
+if (!in_array($vue, array('bordereau', 'renouvellements', 'production'), true)) { $vue = 'bordereau'; }
+$annee = (isset($_GET['annee']) && preg_match('/^\d{4}$/', $_GET['annee'])) ? (int) $_GET['annee'] : (int) date('Y');
 
 // Filtres : etat, tri, periode, societe
 $etatLabels = array('P' => 'Payé', 'C' => 'En cours', 'N' => 'Non réglé', 'R' => 'Remboursé', 'A' => 'Annulé');
@@ -254,6 +255,7 @@ if ($soc_filtre !== 'TOUTES') {
 // Navigation entre tableaux de bord (BI)
 echo '<div class="nav">'
    . '<a href="?vue=bordereau"' . ($vue === 'bordereau' ? ' class="on"' : '') . '>Bordereau rétrocession</a>'
+   . '<a href="?vue=production"' . ($vue === 'production' ? ' class="on"' : '') . '>Production</a>'
    . '<a href="?vue=renouvellements"' . ($vue === 'renouvellements' ? ' class="on"' : '') . '>Renouvellements</a>'
    . '</div>';
 
@@ -262,8 +264,17 @@ $labelPeriode = ($vue === 'renouvellements') ? 'Échéance entre' : 'Période';
 ?>
 <form class="filtres" method="get">
     <input type="hidden" name="vue" value="<?php echo h($vue); ?>">
-    <?php echo $labelPeriode; ?> : <input type="date" name="date_deb" value="<?php echo h($date_deb); ?>">
-    → <input type="date" name="date_fin" value="<?php echo h($date_fin); ?>">
+    <?php if ($vue === 'production'): ?>
+        Année :
+        <select name="annee">
+            <?php for ($y = (int) date('Y'); $y >= 2020; $y--): ?>
+                <option value="<?php echo $y; ?>"<?php echo $annee === $y ? ' selected' : ''; ?>><?php echo $y; ?></option>
+            <?php endfor; ?>
+        </select>
+    <?php else: ?>
+        <?php echo $labelPeriode; ?> : <input type="date" name="date_deb" value="<?php echo h($date_deb); ?>">
+        → <input type="date" name="date_fin" value="<?php echo h($date_fin); ?>">
+    <?php endif; ?>
     &nbsp; Société :
     <select name="soc">
         <option value="TOUTES"<?php echo $soc_filtre === 'TOUTES' ? ' selected' : ''; ?>>Toutes</option>
@@ -290,6 +301,125 @@ $labelPeriode = ($vue === 'renouvellements') ? 'Échéance entre' : 'Période';
     <button type="submit">Appliquer</button>
 </form>
 <?php
+
+// =================================================================
+//  VUE PRODUCTION MENSUELLE
+// =================================================================
+if ($vue === 'production') {
+    $anneePrec = $annee - 1;
+    if (!$idsUsed) {
+        $rows = array();
+    } else {
+        $in = implode(',', array_fill(0, count($idsUsed), '?'));
+        $sql = "SELECT date_demande, prix_formule, com_app
+                FROM jl_garantie
+                WHERE id_app IN ($in) AND num_contrat <> '' AND YEAR(date_demande) IN (?, ?)";
+        $st = $pdo->prepare($sql);
+        $params = $idsUsed; $params[] = $annee; $params[] = $anneePrec;
+        $st->execute($params);
+        $rows = $st->fetchAll();
+    }
+
+    $mN = array(); $mP = array();
+    for ($i = 1; $i <= 12; $i++) { $mN[$i] = array('nb' => 0, 'ca' => 0, 'com' => 0); $mP[$i] = array('nb' => 0, 'ca' => 0, 'com' => 0); }
+    foreach ($rows as $r) {
+        $ts = strtotime($r['date_demande']); if (!$ts) { continue; }
+        $y = (int) date('Y', $ts); $m = (int) date('n', $ts);
+        $ca = num($r['prix_formule']); $com = num($r['com_app']);
+        if ($y === $annee)          { $mN[$m]['nb']++; $mN[$m]['ca'] += $ca; $mN[$m]['com'] += $com; }
+        elseif ($y === $anneePrec)  { $mP[$m]['nb']++; $mP[$m]['ca'] += $ca; $mP[$m]['com'] += $com; }
+    }
+    $totN = array('nb' => 0, 'ca' => 0, 'com' => 0); $totP = array('nb' => 0, 'ca' => 0, 'com' => 0);
+    for ($i = 1; $i <= 12; $i++) { foreach (array('nb', 'ca', 'com') as $k) { $totN[$k] += $mN[$i][$k]; $totP[$k] += $mP[$i][$k]; } }
+    $evolCA = ($totP['ca'] > 0) ? round(($totN['ca'] - $totP['ca']) / $totP['ca'] * 100, 1) : null;
+
+    $moisLbl = array('Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc');
+    $caN = array(); $caP = array(); $nbN = array(); $nbP = array();
+    for ($i = 1; $i <= 12; $i++) { $caN[] = round($mN[$i]['ca'], 2); $caP[] = round($mP[$i]['ca'], 2); $nbN[] = $mN[$i]['nb']; $nbP[] = $mP[$i]['nb']; }
+    ?>
+    <p class="muted">Production <?php echo h($LABEL); ?> — année <strong><?php echo $annee; ?></strong> (comparée à <?php echo $anneePrec; ?>), basée sur la date de souscription.</p>
+    <div class="stats">
+        <div class="stat"><b><?php echo $totN['nb']; ?></b><span>Contrats <?php echo $annee; ?></span></div>
+        <div class="stat"><b><?php echo euros($totN['ca']); ?></b><span>CA (primes) <?php echo $annee; ?></span></div>
+        <div class="stat"><b><?php echo euros($totN['com']); ?></b><span>Commissions apporteur</span></div>
+        <div class="stat"><b style="color:<?php echo ($evolCA !== null && $evolCA < 0) ? '#c02b2b' : '#1a7d49'; ?>"><?php echo $evolCA === null ? '—' : ($evolCA > 0 ? '+' : '') . $evolCA . ' %'; ?></b><span>Évolution CA vs <?php echo $anneePrec; ?></span></div>
+    </div>
+
+    <div style="display:flex;flex-wrap:wrap;gap:20px;margin-top:16px">
+        <div style="flex:1 1 420px;min-width:320px;background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px">
+            <strong>CA (primes) par mois</strong>
+            <div style="height:300px;margin-top:8px"><canvas id="caChart"></canvas></div>
+        </div>
+        <div style="flex:1 1 420px;min-width:320px;background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px">
+            <strong>Nombre de contrats par mois</strong>
+            <div style="height:300px;margin-top:8px"><canvas id="nbChart"></canvas></div>
+        </div>
+    </div>
+
+    <div style="overflow:auto;margin-top:20px">
+    <table>
+        <thead><tr>
+            <th>Mois</th>
+            <th class="num">Contrats <?php echo $annee; ?></th><th class="num">CA <?php echo $annee; ?></th><th class="num">Commissions <?php echo $annee; ?></th>
+            <th class="num">Contrats <?php echo $anneePrec; ?></th><th class="num">CA <?php echo $anneePrec; ?></th>
+        </tr></thead>
+        <tbody>
+        <?php for ($i = 1; $i <= 12; $i++): ?>
+            <tr>
+                <td><?php echo $moisLbl[$i - 1]; ?></td>
+                <td class="num"><?php echo $mN[$i]['nb']; ?></td>
+                <td class="num"><?php echo euros($mN[$i]['ca']); ?></td>
+                <td class="num"><?php echo euros($mN[$i]['com']); ?></td>
+                <td class="num"><?php echo $mP[$i]['nb']; ?></td>
+                <td class="num"><?php echo euros($mP[$i]['ca']); ?></td>
+            </tr>
+        <?php endfor; ?>
+        </tbody>
+        <tfoot><tr style="font-weight:bold;background:#eef4ff">
+            <td>Total</td>
+            <td class="num"><?php echo $totN['nb']; ?></td>
+            <td class="num"><?php echo euros($totN['ca']); ?></td>
+            <td class="num"><?php echo euros($totN['com']); ?></td>
+            <td class="num"><?php echo $totP['nb']; ?></td>
+            <td class="num"><?php echo euros($totP['ca']); ?></td>
+        </tr></tfoot>
+    </table>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script>
+    (function () {
+        if (typeof Chart === 'undefined') { return; }
+        var labels = <?php echo json_encode($moisLbl, JSON_UNESCAPED_UNICODE); ?>;
+        var caN = <?php echo json_encode($caN); ?>, caP = <?php echo json_encode($caP); ?>;
+        var nbN = <?php echo json_encode($nbN); ?>, nbP = <?php echo json_encode($nbP); ?>;
+        var blue = '#1f5eff', gray = '#c9d3e6';
+        new Chart(document.getElementById('caChart'), {
+            type: 'bar',
+            data: { labels: labels, datasets: [
+                { label: '<?php echo $annee; ?>', data: caN, backgroundColor: blue },
+                { label: '<?php echo $anneePrec; ?>', data: caP, backgroundColor: gray }
+            ]},
+            options: { responsive: true, maintainAspectRatio: false,
+                plugins: { tooltip: { callbacks: { label: function (c) { return c.dataset.label + ' : ' + c.parsed.y.toLocaleString('fr-FR', {minimumFractionDigits: 2}) + ' €'; } } } },
+                scales: { y: { beginAtZero: true, ticks: { callback: function (v) { return v.toLocaleString('fr-FR') + ' €'; } } } } }
+        });
+        new Chart(document.getElementById('nbChart'), {
+            type: 'line',
+            data: { labels: labels, datasets: [
+                { label: '<?php echo $annee; ?>', data: nbN, borderColor: blue, backgroundColor: blue, tension: 0.3 },
+                { label: '<?php echo $anneePrec; ?>', data: nbP, borderColor: gray, backgroundColor: gray, tension: 0.3 }
+            ]},
+            options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
+        });
+    })();
+    </script>
+
+    <p class="tools">Astuce : la Production se base sur <code>date_demande</code> (souscription).</p>
+    </body></html>
+    <?php
+    exit;
+}
 
 // =================================================================
 //  VUE RENOUVELLEMENTS
