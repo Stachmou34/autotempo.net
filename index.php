@@ -299,71 +299,98 @@ if ($vue === 'renouvellements') {
         $rows = array();
     } else {
         $in = implode(',', array_fill(0, count($idsUsed), '?'));
-        $sql = 'SELECT g.id AS gid, g.id_app, g.num_contrat, g.type_contrat, g.formule, g.duree,
-                       g.date_effet, g.date_fin, g.prix_formule,
-                       cl.nom AS client_nom, cl.prenom AS client_prenom, cl.ville AS client_ville
+        $sql = 'SELECT g.id AS gid, g.id_app, g.id_vehi, g.num_contrat, g.type_contrat, g.formule, g.duree,
+                       g.date_effet, g.date_fin, g.date_demande, g.prix_formule,
+                       cl.nom AS client_nom, cl.prenom AS client_prenom, cl.ville AS client_ville,
+                       v.immatriculation, v.marque, v.modele
                 FROM jl_garantie g
                 LEFT JOIN jl_client cl ON cl.id = g.id_cli
-                WHERE g.id_app IN (' . $in . ") AND g.num_contrat <> '' AND DATE(g.date_fin) BETWEEN ? AND ?
-                ORDER BY g.date_fin DESC";
+                LEFT JOIN jl_vehicule v ON v.id = g.id_vehi
+                WHERE g.id_app IN (' . $in . ") AND g.num_contrat <> '' AND g.id_vehi > 0
+                      AND DATE(g.date_demande) BETWEEN ? AND ?
+                ORDER BY g.id_vehi, g.date_effet";
         $st = $pdo->prepare($sql);
         $params = $idsUsed; $params[] = $date_deb; $params[] = $date_fin;
         $st->execute($params);
         $rows = $st->fetchAll();
     }
 
-    $aujourdhui = strtotime(date('Y-m-d'));
-    $nb = count($rows); $totPrime = 0; $nbBientot = 0; $nbExpire = 0;
+    // Regroupement par véhicule
+    $groupes = array();
     foreach ($rows as $r) {
-        $totPrime += num($r['prix_formule']);
-        $j = floor((strtotime($r['date_fin']) - $aujourdhui) / 86400);
-        if ($j < 0) { $nbExpire++; } elseif ($j <= 30) { $nbBientot++; }
+        $k = (int) $r['id_vehi'];
+        if (!isset($groupes[$k])) {
+            $groupes[$k] = array(
+                'id_vehi'  => $k,
+                'immat'    => $r['immatriculation'],
+                'vehicule' => trim($r['marque'] . ' ' . $r['modele']),
+                'client'   => trim($r['client_nom'] . ' ' . $r['client_prenom']),
+                'ville'    => $r['client_ville'],
+                'societe'  => isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['societe'] : '',
+                'contrats' => array(),
+                'total'    => 0,
+            );
+        }
+        $groupes[$k]['contrats'][] = $r;
+        $groupes[$k]['total'] += num($r['prix_formule']);
     }
+    // Ne garder que les véhicules avec 2 contrats ou plus (= renouvellements)
+    $multi = array();
+    foreach ($groupes as $g) { if (count($g['contrats']) >= 2) { $multi[] = $g; } }
+    // Trier : le plus de contrats d'abord
+    usort($multi, function ($a, $b) { return count($b['contrats']) - count($a['contrats']); });
+
+    $nbVeh = count($multi); $nbContrats = 0; $totPrime = 0;
+    foreach ($multi as $g) { $nbContrats += count($g['contrats']); $totPrime += $g['total']; }
     ?>
-    <p class="muted">Contrats <?php echo h($LABEL); ?> dont l'échéance tombe entre le
-       <?php echo dateFr($date_deb); ?> et le <?php echo dateFr($date_fin); ?>.</p>
+    <p class="muted">Clients <?php echo h($LABEL); ?> ayant repris <strong>plusieurs contrats pour le même véhicule</strong>
+       (souscriptions du <?php echo dateFr($date_deb); ?> au <?php echo dateFr($date_fin); ?>).</p>
     <div class="stats">
-        <div class="stat"><b><?php echo $nb; ?></b><span>Contrats à échéance</span></div>
+        <div class="stat"><b><?php echo $nbVeh; ?></b><span>Véhicules renouvelés</span></div>
+        <div class="stat"><b><?php echo $nbContrats; ?></b><span>Contrats concernés</span></div>
         <div class="stat"><b><?php echo euros($totPrime); ?></b><span>Primes cumulées</span></div>
-        <div class="stat"><b style="color:#d98a00"><?php echo $nbBientot; ?></b><span>Échéance sous 30 j</span></div>
-        <div class="stat"><b style="color:#c02b2b"><?php echo $nbExpire; ?></b><span>Déjà échus</span></div>
     </div>
 
-    <?php if (!$rows): ?>
-        <p class="muted">Aucun contrat à échéance sur cette période.</p>
+    <?php if (!$multi): ?>
+        <p class="muted">Aucun véhicule avec plusieurs contrats sur cette période.
+        Élargis la période (ex. 01/01/2026 → 31/12/2026) pour voir les renouvellements sur l'année.</p>
     <?php else: ?>
     <div style="overflow:auto">
     <table>
         <thead><tr>
-            <th>N° contrat</th><th>Client</th><th>Ville</th><th>Société</th>
-            <th>Type</th><th>Formule</th><th>Date effet</th><th>Échéance</th><th class="ctr">Jours</th><th class="num">Prime</th>
+            <th>N° contrat</th><th>Type</th><th>Formule</th><th>Date effet</th><th>Échéance</th><th class="ctr">Durée</th><th class="num">Prime</th>
         </tr></thead>
         <tbody>
-        <?php foreach ($rows as $r):
-            $soc = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['societe'] : '';
-            $j = floor((strtotime($r['date_fin']) - $aujourdhui) / 86400);
-            $jaff = ($j < 0) ? 'Échu (' . abs($j) . ' j)' : $j . ' j';
-            $col = ($j < 0) ? '#ffdede' : (($j <= 30) ? '#fff2d9' : '#fff');
-        ?>
-            <tr style="background:<?php echo $col; ?>">
-                <td><?php echo h($r['num_contrat']); ?></td>
-                <td><?php echo h(trim($r['client_nom'] . ' ' . $r['client_prenom'])); ?></td>
-                <td><?php echo h($r['client_ville']); ?></td>
-                <td><?php echo h($soc); ?></td>
-                <td><?php echo h($r['type_contrat']); ?></td>
-                <td><?php echo h($r['formule']); ?></td>
-                <td><?php echo dateFr($r['date_effet']); ?></td>
-                <td><strong><?php echo dateFr($r['date_fin']); ?></strong></td>
-                <td class="ctr"><?php echo h($jaff); ?></td>
-                <td class="num"><?php echo euros(num($r['prix_formule'])); ?></td>
+        <?php foreach ($multi as $g): ?>
+            <tr style="background:#eef4ff">
+                <td colspan="7" style="padding:8px 10px">
+                    🚗 <strong><?php echo h($g['immat'] !== '' && $g['immat'] !== null ? $g['immat'] : 'Véhicule #' . $g['id_vehi']); ?></strong>
+                    <?php echo $g['vehicule'] !== '' ? '— ' . h($g['vehicule']) : ''; ?>
+                    &nbsp;|&nbsp; Client : <strong><?php echo h($g['client']); ?></strong>
+                    <?php echo $g['ville'] !== '' ? '(' . h($g['ville']) . ')' : ''; ?>
+                    <?php echo $g['societe'] !== '' ? '&nbsp;|&nbsp; ' . h($g['societe']) : ''; ?>
+                    &nbsp;|&nbsp; <strong style="color:#1f5eff"><?php echo count($g['contrats']); ?> contrats</strong>
+                    &nbsp;|&nbsp; Total <?php echo euros($g['total']); ?>
+                </td>
             </tr>
+            <?php foreach ($g['contrats'] as $c): ?>
+            <tr>
+                <td><?php echo h($c['num_contrat']); ?></td>
+                <td><?php echo h($c['type_contrat']); ?></td>
+                <td><?php echo h($c['formule']); ?></td>
+                <td><?php echo dateFr($c['date_effet']); ?></td>
+                <td><?php echo dateFr($c['date_fin']); ?></td>
+                <td class="ctr"><?php echo h($c['duree']); ?></td>
+                <td class="num"><?php echo euros(num($c['prix_formule'])); ?></td>
+            </tr>
+            <?php endforeach; ?>
         <?php endforeach; ?>
         </tbody>
     </table>
     </div>
     <?php endif; ?>
 
-    <p class="tools">Outil : <a href="?t=jl_garantie">jl_garantie</a> · <a href="?t=jl_renouvelements">jl_renouvelements</a></p>
+    <p class="tools">Outil : <a href="?t=jl_garantie">jl_garantie</a> · <a href="?t=jl_vehicule">jl_vehicule</a></p>
     </body></html>
     <?php
     exit;
