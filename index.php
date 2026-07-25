@@ -9,7 +9,8 @@ ini_set('session.cookie_httponly', '1');
 session_start();
 header('Content-Type: text/html; charset=utf-8');
 
-$APPORTEUR = 'REYNARD';
+$APPORTEUR = 'REYNARD';       // nom recherché dans la base JLASSURE
+$LABEL     = 'MCJ COURTAGE';  // libellé affiché à l'écran
 $DEPUIS    = '2026-01-01';   // n'afficher que les contrats depuis 2026
 $DIR       = dirname(__FILE__);
 $dbFile    = $DIR . '/db.ini';
@@ -140,7 +141,7 @@ if (!$connecte) {
 // ================================================================
 //  ZONE PROTEGEE
 // ================================================================
-entete('MCJ-Courtage — Bordereau ' . $APPORTEUR);
+entete('MCJ-Courtage — Bordereau ' . $LABEL);
 echo '<div class="topbar"><span class="brand">MCJ-Courtage</span>'
    . '<span class="right">👤 ' . h($_SESSION['user']) . ' <a href="?logout=1">Déconnexion</a></span></div>';
 
@@ -171,7 +172,7 @@ if ($cfg !== null) {
     } catch (Exception $e) { $erreur = $e->getMessage(); }
 }
 
-echo '<h1>Bordereau rétrocession — apporteur <span style="color:#1f5eff">' . h($APPORTEUR) . '</span></h1>'
+echo '<h1>Bordereau rétrocession — <span style="color:#1f5eff">' . h($LABEL) . '</span></h1>'
    . '<p class="muted">Source JLASSURE — contrats depuis le ' . dateFr($DEPUIS) . '</p>';
 
 if ($cfg === null) {
@@ -210,18 +211,23 @@ $apporteurs = $stmt->fetchAll();
 if (!$apporteurs) {
     echo '<p class="no">Aucun apporteur « ' . h($APPORTEUR) . ' » dans jl_app.</p></body></html>'; exit;
 }
-$ids = array(); $apMap = array(); $noms = array();
+$ids = array(); $apMap = array(); $societes = array();
 foreach ($apporteurs as $a) {
     $ids[] = (int) $a['id'];
     $com = explode('|', (string) $a['commentaire']);
-    $apMap[(int) $a['id']] = (isset($com[2]) && $com[2] == '1') ? 1 : 0; // retro marque blanche
-    $noms[] = $a['nom'] . ' ' . $a['prenom'] . ($a['societe'] ? ' (' . $a['societe'] . ')' : '');
+    $soc = ($a['societe'] !== '' && $a['societe'] !== null) ? $a['societe'] : trim($a['nom'] . ' ' . $a['prenom']);
+    $apMap[(int) $a['id']] = array(
+        'mb'      => (isset($com[2]) && $com[2] == '1') ? 1 : 0, // rétro marque blanche
+        'societe' => $soc,
+    );
+    if (!in_array($soc, $societes, true)) { $societes[] = $soc; }
 }
-echo '<p class="muted">Apporteur : <strong>' . h(implode(' · ', $noms)) . '</strong></p>';
+echo '<p class="muted">Sociétés : <strong>' . h(implode(' · ', $societes)) . '</strong></p>';
 
-// Filtre d'etat
+// Filtre d'etat + tri
 $etatLabels = array('P' => 'Payé', 'C' => 'En cours', 'N' => 'Non réglé', 'R' => 'Remboursé', 'A' => 'Annulé');
 $etat_filtre = isset($_GET['etat_filtre']) ? $_GET['etat_filtre'] : 'TOUS';
+$tri = isset($_GET['tri']) ? $_GET['tri'] : 'date_desc';
 
 // ── Garanties (contrats) depuis 2026 + reglements ─────────────────
 $in = implode(',', array_fill(0, count($ids), '?'));
@@ -240,10 +246,14 @@ $st->execute($ids);
 $brut = $st->fetchAll();
 
 // Calculs par ligne
-$lignes = array(); $totBanque = 0; $totRetro = 0;
+$lignes = array(); $totBanque = 0; $totRcdr = 0; $totHono = 0;
 foreach ($brut as $rw) {
     $etat = $rw['etat'];
     if ($etat_filtre !== 'TOUS' && $etat !== $etat_filtre) { continue; }
+
+    $idApp   = (int) $rw['id_app'];
+    $mb      = isset($apMap[$idApp]) ? $apMap[$idApp]['mb'] : 0;
+    $societe = isset($apMap[$idApp]) ? $apMap[$idApp]['societe'] : '';
 
     $montant_regle = num($rw['note3']);
     $prime_esc     = num($rw['pa']);
@@ -254,28 +264,48 @@ foreach ($brut as $rw) {
 
     if ($etat === 'A' || $etat === 'R') { $montant_regle = 0; $pv_client = 0; }
 
-    $mb = isset($apMap[(int) $rw['id_app']]) ? $apMap[(int) $rw['id_app']] : 0;
+    // Rétro RC DR (commissions) + Rétro Honoraires (retro_sup = id_lb2 en marque blanche)
     if ($mb == 1) {
-        $retro = round(($pv - $prime_esc) * 0.4764, 2);   // marque blanche
+        $retro_rcdr = round(($pv - $prime_esc) * 0.4764, 2);   // marque blanche
+        $retro_hono = round(num($rw['id_lb2']), 2);
     } else {
-        $retro = round($montant_regle - $pv - $prix_ass - $prix_dr, 2);
+        $retro_rcdr = round($montant_regle - $pv - $prix_ass - $prix_dr, 2);
+        $retro_hono = 0;
     }
-    if ($retro <= 0) { $retro = 0; }
+    if ($retro_rcdr <= 0) { $retro_rcdr = 0; }
+    if ($retro_hono <= 0) { $retro_hono = 0; }
 
     $totBanque += $montant_regle;
-    $totRetro  += $retro;
+    $totRcdr   += $retro_rcdr;
+    $totHono   += $retro_hono;
 
     $lignes[] = array('etat' => $etat, 'gid' => $rw['gid'], 'rid' => $rw['rid'],
         'dr' => $rw['date_reglement'], 'dd' => $rw['date_demande'], 'nc' => $rw['num_contrat'],
         'duree' => $rw['duree'], 'client' => trim($rw['client_nom'] . ' ' . $rw['client_prenom']),
-        'banque' => $montant_regle, 'pvc' => $pv_client, 'retro' => $retro, 'info' => $rw['note2']);
+        'societe' => $societe, 'banque' => $montant_regle, 'pvc' => $pv_client,
+        'rcdr' => $retro_rcdr, 'hono' => $retro_hono, 'info' => $rw['note2']);
+}
+$totRetro = $totRcdr + $totHono;
+
+// Tri
+if ($tri === 'date_asc') {
+    usort($lignes, function ($a, $b) { return strtotime($a['dr']) - strtotime($b['dr']); });
+} elseif ($tri === 'societe') {
+    usort($lignes, function ($a, $b) {
+        $c = strcasecmp($a['societe'], $b['societe']);
+        return $c !== 0 ? $c : (strtotime($b['dr']) - strtotime($a['dr']));
+    });
+} else { // date_desc
+    usort($lignes, function ($a, $b) { return strtotime($b['dr']) - strtotime($a['dr']); });
 }
 ?>
 
 <div class="stats">
     <div class="stat"><b><?php echo count($lignes); ?></b><span>Lignes (règlements)</span></div>
     <div class="stat"><b><?php echo euros($totBanque); ?></b><span>Total réglé (banque)</span></div>
-    <div class="stat hl"><b><?php echo euros($totRetro); ?></b><span>Total à rétrocéder à <?php echo h($APPORTEUR); ?></span></div>
+    <div class="stat"><b><?php echo euros($totRcdr); ?></b><span>Rétro RC DR (commissions)</span></div>
+    <div class="stat"><b><?php echo euros($totHono); ?></b><span>Rétro Honoraires</span></div>
+    <div class="stat hl"><b><?php echo euros($totRetro); ?></b><span>Total à rétrocéder à <?php echo h($LABEL); ?></span></div>
 </div>
 
 <form class="filtres" method="get">
@@ -285,6 +315,12 @@ foreach ($brut as $rw) {
         <?php foreach ($etatLabels as $k => $lib): ?>
             <option value="<?php echo $k; ?>"<?php echo $etat_filtre === $k ? ' selected' : ''; ?>><?php echo $k . ' — ' . $lib; ?></option>
         <?php endforeach; ?>
+    </select>
+    &nbsp; Trier par :
+    <select name="tri" onchange="this.form.submit()">
+        <option value="date_desc"<?php echo $tri === 'date_desc' ? ' selected' : ''; ?>>Date (récent → ancien)</option>
+        <option value="date_asc"<?php echo $tri === 'date_asc' ? ' selected' : ''; ?>>Date (ancien → récent)</option>
+        <option value="societe"<?php echo $tri === 'societe' ? ' selected' : ''; ?>>Société</option>
     </select>
     <button type="submit">Appliquer</button>
     <div class="legende">
@@ -301,14 +337,16 @@ foreach ($brut as $rw) {
 <table>
     <thead><tr>
         <th>État</th><th>ID Gar</th><th>ID Rég</th><th>Réglé le</th><th>Demande</th>
-        <th>N° contrat</th><th>Durée</th><th>Client</th>
-        <th class="num">Banque</th><th class="num">PV client</th><th class="num">Rétro apporteur</th><th>Info</th>
+        <th>N° contrat</th><th>Durée</th><th>Client</th><th>Société</th>
+        <th class="num">Banque</th><th class="num">PV client</th>
+        <th class="num">Rétro RC DR</th><th class="num">Rétro Honoraires</th><th class="num">Total rétro</th><th>Info</th>
     </tr></thead>
     <tbody>
     <?php foreach ($lignes as $l):
         $bg = ($l['etat'] === 'P') ? '#ffffff' : (($l['etat'] === 'C') ? '#FFF0F0' : '#FFD0F0');
         $mt = ($l['banque'] <= 0) ? '#ffdede' : $bg;
-        $fw = ($l['retro'] > 0) ? 'font-weight:bold;' : '';
+        $ligneTot = $l['rcdr'] + $l['hono'];
+        $fw = ($ligneTot > 0) ? 'font-weight:bold;' : '';
     ?>
         <tr style="background:<?php echo $bg; ?>">
             <td class="ctr"><strong><?php echo h($l['etat']); ?></strong> <span class="muted"><?php echo isset($etatLabels[$l['etat']]) ? h($etatLabels[$l['etat']]) : ''; ?></span></td>
@@ -319,17 +357,22 @@ foreach ($brut as $rw) {
             <td><?php echo h($l['nc']); ?></td>
             <td class="ctr"><?php echo h($l['duree']); ?></td>
             <td><?php echo h($l['client']); ?></td>
+            <td><?php echo h($l['societe']); ?></td>
             <td class="num" style="background:<?php echo $mt; ?>"><?php echo euros($l['banque']); ?></td>
             <td class="num"><?php echo euros($l['pvc']); ?></td>
-            <td class="num" style="<?php echo $fw; ?>"><?php echo euros($l['retro']); ?></td>
+            <td class="num"><?php echo euros($l['rcdr']); ?></td>
+            <td class="num"><?php echo euros($l['hono']); ?></td>
+            <td class="num" style="<?php echo $fw; ?>"><?php echo euros($ligneTot); ?></td>
             <td><?php echo h($l['info']); ?></td>
         </tr>
     <?php endforeach; ?>
     </tbody>
     <tfoot><tr style="font-weight:bold;background:#eef4ff">
-        <td colspan="8" style="text-align:right">TOTAUX</td>
+        <td colspan="9" style="text-align:right">TOTAUX</td>
         <td class="num"><?php echo euros($totBanque); ?></td>
         <td></td>
+        <td class="num"><?php echo euros($totRcdr); ?></td>
+        <td class="num"><?php echo euros($totHono); ?></td>
         <td class="num"><?php echo euros($totRetro); ?></td>
         <td></td>
     </tr></tfoot>
