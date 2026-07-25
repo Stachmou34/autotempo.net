@@ -238,8 +238,9 @@ $etatLabels = array('P' => 'Payé', 'C' => 'En cours', 'N' => 'Non réglé', 'R'
 $etat_filtre = isset($_GET['etat_filtre']) ? $_GET['etat_filtre'] : 'TOUS';
 $tri = isset($_GET['tri']) ? $_GET['tri'] : 'date_desc';
 $soc_filtre = isset($_GET['soc']) ? $_GET['soc'] : 'TOUTES';
-$date_deb = validDate(isset($_GET['date_deb']) ? $_GET['date_deb'] : '', $DEPUIS);
-$date_fin = validDate(isset($_GET['date_fin']) ? $_GET['date_fin'] : '', date('Y-m-d'));
+// Par défaut : période du mois en cours (1er → dernier jour du mois)
+$date_deb = validDate(isset($_GET['date_deb']) ? $_GET['date_deb'] : '', date('Y-m-01'));
+$date_fin = validDate(isset($_GET['date_fin']) ? $_GET['date_fin'] : '', date('Y-m-t'));
 
 // Restreindre aux apporteurs de la société choisie
 $idsUsed = $ids;
@@ -304,7 +305,7 @@ if ($vue === 'renouvellements') {
                 FROM jl_garantie g
                 LEFT JOIN jl_client cl ON cl.id = g.id_cli
                 WHERE g.id_app IN (' . $in . ") AND g.num_contrat <> '' AND DATE(g.date_fin) BETWEEN ? AND ?
-                ORDER BY g.date_fin ASC";
+                ORDER BY g.date_fin DESC";
         $st = $pdo->prepare($sql);
         $params = $idsUsed; $params[] = $date_deb; $params[] = $date_fin;
         $st->execute($params);
