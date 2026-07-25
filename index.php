@@ -311,44 +311,55 @@ if ($vue === 'production') {
         $rows = array();
     } else {
         $in = implode(',', array_fill(0, count($idsUsed), '?'));
-        $sql = "SELECT date_demande, prix_formule, com_app
-                FROM jl_garantie
-                WHERE id_app IN ($in) AND num_contrat <> '' AND YEAR(date_demande) IN (?, ?)";
+        $sql = "SELECT g.id AS gid, g.id_app, g.date_demande, g.prix_assitance, g.prix_pj, g.id_lb2,
+                       r.note3, r.pa, r.marge AS r_marge, r.honoraire AS r_hono, r.etat
+                FROM jl_garantie g
+                JOIN jl_reglement r ON r.id_garantie = g.id
+                WHERE g.id_app IN ($in) AND g.num_contrat <> '' AND YEAR(g.date_demande) IN (?, ?)";
         $st = $pdo->prepare($sql);
         $params = $idsUsed; $params[] = $annee; $params[] = $anneePrec;
         $st->execute($params);
         $rows = $st->fetchAll();
     }
 
-    $mN = array(); $mP = array();
-    for ($i = 1; $i <= 12; $i++) { $mN[$i] = array('nb' => 0, 'ca' => 0, 'com' => 0); $mP[$i] = array('nb' => 0, 'ca' => 0, 'com' => 0); }
+    // Total à rétrocéder par mois (même calcul que le bordereau) + nb de contrats distincts
+    $mN = array(); $mP = array(); $gN = array(); $gP = array();
+    for ($i = 1; $i <= 12; $i++) { $mN[$i] = 0; $mP[$i] = 0; $gN[$i] = array(); $gP[$i] = array(); }
     foreach ($rows as $r) {
         $ts = strtotime($r['date_demande']); if (!$ts) { continue; }
         $y = (int) date('Y', $ts); $m = (int) date('n', $ts);
-        $ca = num($r['prix_formule']); $com = num($r['com_app']);
-        if ($y === $annee)          { $mN[$m]['nb']++; $mN[$m]['ca'] += $ca; $mN[$m]['com'] += $com; }
-        elseif ($y === $anneePrec)  { $mP[$m]['nb']++; $mP[$m]['ca'] += $ca; $mP[$m]['com'] += $com; }
+        $mb = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['mb'] : 0;
+        $etat = $r['etat'];
+        $montant = num($r['note3']); if ($etat === 'A' || $etat === 'R') { $montant = 0; }
+        $prime_esc = num($r['pa']); $pv = $prime_esc + num($r['r_marge']) + num($r['r_hono']);
+        $prix_ass = num($r['prix_assitance']); $prix_dr = num($r['prix_pj']);
+        if ($mb == 1) { $rcdr = round(($pv - $prime_esc) * 0.4764, 2); $hono = round(num($r['id_lb2']), 2); }
+        else          { $rcdr = round($montant - $pv - $prix_ass - $prix_dr, 2); $hono = 0; }
+        if ($rcdr <= 0) { $rcdr = 0; } if ($hono <= 0) { $hono = 0; }
+        $retro = $rcdr + $hono;
+        if ($y === $annee)         { $mN[$m] += $retro; $gN[$m][(int) $r['gid']] = 1; }
+        elseif ($y === $anneePrec) { $mP[$m] += $retro; $gP[$m][(int) $r['gid']] = 1; }
     }
-    $totN = array('nb' => 0, 'ca' => 0, 'com' => 0); $totP = array('nb' => 0, 'ca' => 0, 'com' => 0);
-    for ($i = 1; $i <= 12; $i++) { foreach (array('nb', 'ca', 'com') as $k) { $totN[$k] += $mN[$i][$k]; $totP[$k] += $mP[$i][$k]; } }
-    $evolCA = ($totP['ca'] > 0) ? round(($totN['ca'] - $totP['ca']) / $totP['ca'] * 100, 1) : null;
+    $totRetroN = 0; $totRetroP = 0; $totNbN = 0; $totNbP = 0;
+    for ($i = 1; $i <= 12; $i++) { $totRetroN += $mN[$i]; $totRetroP += $mP[$i]; $totNbN += count($gN[$i]); $totNbP += count($gP[$i]); }
+    $evol = ($totRetroP > 0) ? round(($totRetroN - $totRetroP) / $totRetroP * 100, 1) : null;
 
     $moisLbl = array('Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc');
-    $caN = array(); $caP = array(); $nbN = array(); $nbP = array();
-    for ($i = 1; $i <= 12; $i++) { $caN[] = round($mN[$i]['ca'], 2); $caP[] = round($mP[$i]['ca'], 2); $nbN[] = $mN[$i]['nb']; $nbP[] = $mP[$i]['nb']; }
+    $retroN = array(); $retroP = array(); $nbN = array(); $nbP = array();
+    for ($i = 1; $i <= 12; $i++) { $retroN[] = round($mN[$i], 2); $retroP[] = round($mP[$i], 2); $nbN[] = count($gN[$i]); $nbP[] = count($gP[$i]); }
     ?>
-    <p class="muted">Production <?php echo h($LABEL); ?> — année <strong><?php echo $annee; ?></strong> (comparée à <?php echo $anneePrec; ?>), basée sur la date de souscription.</p>
+    <p class="muted">Production <?php echo h($LABEL); ?> — année <strong><?php echo $annee; ?></strong> (comparée à <?php echo $anneePrec; ?>), basée sur la date de souscription. Montants = total à rétrocéder (commissions RC DR + honoraires).</p>
     <div class="stats">
-        <div class="stat"><b><?php echo $totN['nb']; ?></b><span>Contrats <?php echo $annee; ?></span></div>
-        <div class="stat"><b><?php echo euros($totN['ca']); ?></b><span>CA (primes) <?php echo $annee; ?></span></div>
-        <div class="stat"><b><?php echo euros($totN['com']); ?></b><span>Commissions apporteur</span></div>
-        <div class="stat"><b style="color:<?php echo ($evolCA !== null && $evolCA < 0) ? '#c02b2b' : '#1a7d49'; ?>"><?php echo $evolCA === null ? '—' : ($evolCA > 0 ? '+' : '') . $evolCA . ' %'; ?></b><span>Évolution CA vs <?php echo $anneePrec; ?></span></div>
+        <div class="stat"><b><?php echo $totNbN; ?></b><span>Contrats <?php echo $annee; ?></span></div>
+        <div class="stat hl"><b><?php echo euros($totRetroN); ?></b><span>À rétrocéder <?php echo $annee; ?></span></div>
+        <div class="stat"><b><?php echo euros($totRetroP); ?></b><span>À rétrocéder <?php echo $anneePrec; ?></span></div>
+        <div class="stat"><b style="color:<?php echo ($evol !== null && $evol < 0) ? '#c02b2b' : '#1a7d49'; ?>"><?php echo $evol === null ? '—' : ($evol > 0 ? '+' : '') . $evol . ' %'; ?></b><span>Évolution vs <?php echo $anneePrec; ?></span></div>
     </div>
 
     <div style="display:flex;flex-wrap:wrap;gap:20px;margin-top:16px">
         <div style="flex:1 1 420px;min-width:320px;background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px">
-            <strong>CA (primes) par mois</strong>
-            <div style="height:300px;margin-top:8px"><canvas id="caChart"></canvas></div>
+            <strong>Total à rétrocéder par mois</strong>
+            <div style="height:300px;margin-top:8px"><canvas id="retroChart"></canvas></div>
         </div>
         <div style="flex:1 1 420px;min-width:320px;background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px">
             <strong>Nombre de contrats par mois</strong>
@@ -360,28 +371,26 @@ if ($vue === 'production') {
     <table>
         <thead><tr>
             <th>Mois</th>
-            <th class="num">Contrats <?php echo $annee; ?></th><th class="num">CA <?php echo $annee; ?></th><th class="num">Commissions <?php echo $annee; ?></th>
-            <th class="num">Contrats <?php echo $anneePrec; ?></th><th class="num">CA <?php echo $anneePrec; ?></th>
+            <th class="num">Contrats <?php echo $annee; ?></th><th class="num">À rétrocéder <?php echo $annee; ?></th>
+            <th class="num">Contrats <?php echo $anneePrec; ?></th><th class="num">À rétrocéder <?php echo $anneePrec; ?></th>
         </tr></thead>
         <tbody>
         <?php for ($i = 1; $i <= 12; $i++): ?>
             <tr>
                 <td><?php echo $moisLbl[$i - 1]; ?></td>
-                <td class="num"><?php echo $mN[$i]['nb']; ?></td>
-                <td class="num"><?php echo euros($mN[$i]['ca']); ?></td>
-                <td class="num"><?php echo euros($mN[$i]['com']); ?></td>
-                <td class="num"><?php echo $mP[$i]['nb']; ?></td>
-                <td class="num"><?php echo euros($mP[$i]['ca']); ?></td>
+                <td class="num"><?php echo count($gN[$i]); ?></td>
+                <td class="num"><?php echo euros($mN[$i]); ?></td>
+                <td class="num"><?php echo count($gP[$i]); ?></td>
+                <td class="num"><?php echo euros($mP[$i]); ?></td>
             </tr>
         <?php endfor; ?>
         </tbody>
         <tfoot><tr style="font-weight:bold;background:#eef4ff">
             <td>Total</td>
-            <td class="num"><?php echo $totN['nb']; ?></td>
-            <td class="num"><?php echo euros($totN['ca']); ?></td>
-            <td class="num"><?php echo euros($totN['com']); ?></td>
-            <td class="num"><?php echo $totP['nb']; ?></td>
-            <td class="num"><?php echo euros($totP['ca']); ?></td>
+            <td class="num"><?php echo $totNbN; ?></td>
+            <td class="num"><?php echo euros($totRetroN); ?></td>
+            <td class="num"><?php echo $totNbP; ?></td>
+            <td class="num"><?php echo euros($totRetroP); ?></td>
         </tr></tfoot>
     </table>
     </div>
@@ -391,14 +400,14 @@ if ($vue === 'production') {
     (function () {
         if (typeof Chart === 'undefined') { return; }
         var labels = <?php echo json_encode($moisLbl, JSON_UNESCAPED_UNICODE); ?>;
-        var caN = <?php echo json_encode($caN); ?>, caP = <?php echo json_encode($caP); ?>;
+        var retroN = <?php echo json_encode($retroN); ?>, retroP = <?php echo json_encode($retroP); ?>;
         var nbN = <?php echo json_encode($nbN); ?>, nbP = <?php echo json_encode($nbP); ?>;
         var blue = '#1f5eff', gray = '#c9d3e6';
-        new Chart(document.getElementById('caChart'), {
+        new Chart(document.getElementById('retroChart'), {
             type: 'bar',
             data: { labels: labels, datasets: [
-                { label: '<?php echo $annee; ?>', data: caN, backgroundColor: blue },
-                { label: '<?php echo $anneePrec; ?>', data: caP, backgroundColor: gray }
+                { label: '<?php echo $annee; ?>', data: retroN, backgroundColor: blue },
+                { label: '<?php echo $anneePrec; ?>', data: retroP, backgroundColor: gray }
             ]},
             options: { responsive: true, maintainAspectRatio: false,
                 plugins: { tooltip: { callbacks: { label: function (c) { return c.dataset.label + ' : ' + c.parsed.y.toLocaleString('fr-FR', {minimumFractionDigits: 2}) + ' €'; } } } },
@@ -414,8 +423,6 @@ if ($vue === 'production') {
         });
     })();
     </script>
-
-    <p class="tools">Astuce : la Production se base sur <code>date_demande</code> (souscription).</p>
     </body></html>
     <?php
     exit;
