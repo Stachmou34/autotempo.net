@@ -24,6 +24,10 @@ function dateFr($v) {
     $ts = strtotime($v);
     return $ts ? date('d/m/Y', $ts) : h($v);
 }
+function validDate($d, $def) {
+    $d = trim((string) $d);
+    return preg_match('/^\d{4}-\d{2}-\d{2}$/', $d) ? $d : $def;
+}
 function jeton() {
     if (empty($_SESSION['csrf'])) {
         $_SESSION['csrf'] = function_exists('random_bytes')
@@ -55,7 +59,7 @@ function css() {
       . '.topbar{display:flex;justify-content:space-between;align-items:center;background:#fff;border-bottom:1px solid #e3e8f0;padding:12px 18px;margin:0 -16px 20px}'
       . '.topbar .brand{font-weight:700;color:#1f5eff;font-size:18px} .topbar .right{font-size:14px;color:#555}'
       . '.topbar a{color:#c02b2b;text-decoration:none;margin-left:14px}'
-      . '.filtres{margin:14px 0;font-size:14px} .filtres select,.filtres button{font:inherit;padding:6px 10px;border:1px solid #ccd4e2;border-radius:6px}'
+      . '.filtres{margin:14px 0;font-size:14px;line-height:2.2} .filtres select,.filtres button,.filtres input{font:inherit;padding:6px 10px;border:1px solid #ccd4e2;border-radius:6px}'
       . '.filtres button{background:#1f5eff;color:#fff;border:0;cursor:pointer}'
       . '.legende{font-size:12px;color:#666;margin-top:8px} .legende span{display:inline-block;padding:2px 8px;border-radius:4px;margin-right:6px}'
       . '.card{max-width:380px;margin:60px auto;background:#fff;border:1px solid #dde3ee;border-radius:10px;padding:28px;box-shadow:0 6px 24px rgba(20,30,60,.06)}'
@@ -173,7 +177,7 @@ if ($cfg !== null) {
 }
 
 echo '<h1>Bordereau rétrocession — <span style="color:#1f5eff">' . h($LABEL) . '</span></h1>'
-   . '<p class="muted">Source JLASSURE — contrats depuis le ' . dateFr($DEPUIS) . '</p>';
+   . '<p class="muted">Source JLASSURE</p>';
 
 if ($cfg === null) {
     if ($messageEcriture) { echo '<div class="alert err">' . h($messageEcriture) . '</div>'; }
@@ -224,26 +228,45 @@ foreach ($apporteurs as $a) {
 }
 echo '<p class="muted">Sociétés : <strong>' . h(implode(' · ', $societes)) . '</strong></p>';
 
-// Filtre d'etat + tri
+// Filtres : etat, tri, periode, societe
 $etatLabels = array('P' => 'Payé', 'C' => 'En cours', 'N' => 'Non réglé', 'R' => 'Remboursé', 'A' => 'Annulé');
 $etat_filtre = isset($_GET['etat_filtre']) ? $_GET['etat_filtre'] : 'TOUS';
 $tri = isset($_GET['tri']) ? $_GET['tri'] : 'date_desc';
+$soc_filtre = isset($_GET['soc']) ? $_GET['soc'] : 'TOUTES';
+$date_deb = validDate(isset($_GET['date_deb']) ? $_GET['date_deb'] : '', $DEPUIS);
+$date_fin = validDate(isset($_GET['date_fin']) ? $_GET['date_fin'] : '', date('Y-m-d'));
 
-// ── Garanties (contrats) depuis 2026 + reglements ─────────────────
-$in = implode(',', array_fill(0, count($ids), '?'));
-$sql = 'SELECT g.id AS gid, g.id_app, g.num_contrat, g.num_garantie, g.duree, g.date_demande,
-               g.prix_achat AS g_pa, g.marge AS g_marge, g.honoraire AS g_hono, g.id_lb2,
-               g.prix_assitance, g.prix_pj,
-               r.id AS rid, r.date_reglement, r.note3, r.etat, r.note2, r.pa, r.marge AS r_marge, r.honoraire AS r_hono,
-               cl.nom AS client_nom, cl.prenom AS client_prenom
-        FROM jl_garantie g
-        JOIN jl_reglement r ON r.id_garantie = g.id
-        LEFT JOIN jl_client cl ON cl.id = g.id_cli
-        WHERE g.id_app IN (' . $in . ") AND g.num_contrat <> '' AND g.date_demande >= '" . $DEPUIS . "'
-        ORDER BY r.date_reglement DESC, g.id DESC";
-$st = $pdo->prepare($sql);
-$st->execute($ids);
-$brut = $st->fetchAll();
+// Restreindre aux apporteurs de la société choisie
+$idsUsed = $ids;
+if ($soc_filtre !== 'TOUTES') {
+    $idsUsed = array();
+    foreach ($apMap as $aid => $info) {
+        if ($info['societe'] === $soc_filtre) { $idsUsed[] = $aid; }
+    }
+}
+
+// ── Garanties (contrats) sur la période + reglements ──────────────
+if (!$idsUsed) {
+    $brut = array();
+} else {
+    $in = implode(',', array_fill(0, count($idsUsed), '?'));
+    $sql = 'SELECT g.id AS gid, g.id_app, g.num_contrat, g.num_garantie, g.duree, g.date_demande,
+                   g.prix_achat AS g_pa, g.marge AS g_marge, g.honoraire AS g_hono, g.id_lb2,
+                   g.prix_assitance, g.prix_pj,
+                   r.id AS rid, r.date_reglement, r.note3, r.etat, r.note2, r.pa, r.marge AS r_marge, r.honoraire AS r_hono,
+                   cl.nom AS client_nom, cl.prenom AS client_prenom
+            FROM jl_garantie g
+            JOIN jl_reglement r ON r.id_garantie = g.id
+            LEFT JOIN jl_client cl ON cl.id = g.id_cli
+            WHERE g.id_app IN (' . $in . ") AND g.num_contrat <> '' AND g.date_demande BETWEEN ? AND ?
+            ORDER BY r.date_reglement DESC, g.id DESC";
+    $st = $pdo->prepare($sql);
+    $params = $idsUsed;
+    $params[] = $date_deb;
+    $params[] = $date_fin;
+    $st->execute($params);
+    $brut = $st->fetchAll();
+}
 
 // Calculs par ligne
 $lignes = array(); $totBanque = 0; $totRcdr = 0; $totHono = 0;
@@ -309,15 +332,25 @@ if ($tri === 'date_asc') {
 </div>
 
 <form class="filtres" method="get">
-    Filtrer par état :
-    <select name="etat_filtre" onchange="this.form.submit()">
+    Période : <input type="date" name="date_deb" value="<?php echo h($date_deb); ?>">
+    → <input type="date" name="date_fin" value="<?php echo h($date_fin); ?>">
+    &nbsp; Société :
+    <select name="soc">
+        <option value="TOUTES"<?php echo $soc_filtre === 'TOUTES' ? ' selected' : ''; ?>>Toutes</option>
+        <?php foreach ($societes as $s): ?>
+            <option value="<?php echo h($s); ?>"<?php echo $soc_filtre === $s ? ' selected' : ''; ?>><?php echo h($s); ?></option>
+        <?php endforeach; ?>
+    </select>
+    <br>
+    État :
+    <select name="etat_filtre">
         <option value="TOUS"<?php echo $etat_filtre === 'TOUS' ? ' selected' : ''; ?>>Tous</option>
         <?php foreach ($etatLabels as $k => $lib): ?>
             <option value="<?php echo $k; ?>"<?php echo $etat_filtre === $k ? ' selected' : ''; ?>><?php echo $k . ' — ' . $lib; ?></option>
         <?php endforeach; ?>
     </select>
     &nbsp; Trier par :
-    <select name="tri" onchange="this.form.submit()">
+    <select name="tri">
         <option value="date_desc"<?php echo $tri === 'date_desc' ? ' selected' : ''; ?>>Date (récent → ancien)</option>
         <option value="date_asc"<?php echo $tri === 'date_asc' ? ' selected' : ''; ?>>Date (ancien → récent)</option>
         <option value="societe"<?php echo $tri === 'societe' ? ' selected' : ''; ?>>Société</option>
@@ -331,7 +364,8 @@ if ($tri === 'date_asc') {
 </form>
 
 <?php if (!$lignes): ?>
-    <p class="muted">Aucun contrat pour cet apporteur depuis <?php echo dateFr($DEPUIS); ?><?php echo $etat_filtre !== 'TOUS' ? ' (état ' . h($etat_filtre) . ')' : ''; ?>.</p>
+    <p class="muted">Aucun contrat pour <?php echo $soc_filtre === 'TOUTES' ? 'cet apporteur' : h($soc_filtre); ?>
+    du <?php echo dateFr($date_deb); ?> au <?php echo dateFr($date_fin); ?><?php echo $etat_filtre !== 'TOUS' ? ' (état ' . h($etat_filtre) . ')' : ''; ?>.</p>
 <?php else: ?>
 <div style="overflow:auto">
 <table>
