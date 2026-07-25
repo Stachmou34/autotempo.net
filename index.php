@@ -303,7 +303,7 @@ if ($vue === 'renouvellements') {
                        cl.nom AS client_nom, cl.prenom AS client_prenom, cl.ville AS client_ville
                 FROM jl_garantie g
                 LEFT JOIN jl_client cl ON cl.id = g.id_cli
-                WHERE g.id_app IN (' . $in . ") AND g.num_contrat <> '' AND g.date_fin BETWEEN ? AND ?
+                WHERE g.id_app IN (' . $in . ") AND g.num_contrat <> '' AND DATE(g.date_fin) BETWEEN ? AND ?
                 ORDER BY g.date_fin ASC";
         $st = $pdo->prepare($sql);
         $params = $idsUsed; $params[] = $date_deb; $params[] = $date_fin;
@@ -385,7 +385,7 @@ if (!$idsUsed) {
             FROM jl_garantie g
             JOIN jl_reglement r ON r.id_garantie = g.id
             LEFT JOIN jl_client cl ON cl.id = g.id_cli
-            WHERE g.id_app IN (' . $in . ") AND g.num_contrat <> '' AND g.date_demande BETWEEN ? AND ?
+            WHERE g.id_app IN (' . $in . ") AND g.num_contrat <> '' AND DATE(g.date_demande) BETWEEN ? AND ?
             ORDER BY r.date_reglement DESC, g.id DESC";
     $st = $pdo->prepare($sql);
     $params = $idsUsed;
