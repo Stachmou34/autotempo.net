@@ -57,4 +57,4 @@ if ($rows) {
 
 $sujet = 'Récap MCJ-Courtage du ' . date('d/m/Y', strtotime($hier)) . ' — ' . count($rows) . ' demande(s)';
 $ok = envoyerMail($EMAIL_TO, $EMAIL_FROM, $sujet, gabaritMail('Récapitulatif de la veille', $corps));
-echo ($ok ? 'Email envoyé' : 'Échec envoi') . ' — ' . count($rows) . " demande(s)\n";
+logCron('cron_recap', ($ok ? 'Email envoyé' : 'ECHEC envoi mail') . ' à ' . $EMAIL_TO . ' — ' . count($rows) . ' demande(s) le ' . $hier . ' (' . $nbContrats . ' contrats, ' . $nbDevis . ' devis)');

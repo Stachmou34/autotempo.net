@@ -8,6 +8,8 @@ ini_set('display_errors', '1'); // TODO: '0' en production
 ini_set('session.cookie_httponly', '1');
 session_start();
 header('Content-Type: text/html; charset=utf-8');
+ob_start(); // bufferise la sortie : permet de basculer en CSV à la demande
+$EXPORT = isset($_GET['export']) ? $_GET['export'] : '';
 
 $APPORTEUR = 'REYNARD';       // nom recherché dans la base JLASSURE
 $LABEL     = 'MCJ COURTAGE';  // libellé affiché à l'écran
@@ -18,6 +20,22 @@ $authFile  = $DIR . '/auth.ini';
 
 function h($s) { return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'); }
 function num($v) { return (float) str_replace(array(' ', ','), array('', '.'), (string) $v); }
+/** Sort un CSV (jette le HTML bufferisé) et arrête le script. $rows[0] = entêtes. */
+function csvOut($filename, $rows) {
+    while (ob_get_level() > 0) { ob_end_clean(); }
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    $out = fopen('php://output', 'w');
+    fwrite($out, "\xEF\xBB\xBF"); // BOM pour Excel
+    foreach ($rows as $r) { fputcsv($out, $r, ';'); }
+    fclose($out);
+    exit;
+}
+/** Lien "Exporter CSV" conservant les filtres courants. */
+function lienCsv($extra = array()) {
+    $q = array_merge($_GET, array('export' => 'csv'), $extra);
+    return '?' . http_build_query($q);
+}
 function euros($v) { return number_format((float) $v, 2, ',', ' ') . ' €'; }
 function dateFr($v) {
     if (empty($v) || $v === '0000-00-00') { return '—'; }
@@ -348,6 +366,13 @@ if ($vue === 'production') {
     $moisLbl = array('Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc');
     $retroN = array(); $retroP = array(); $nbN = array(); $nbP = array();
     for ($i = 1; $i <= 12; $i++) { $retroN[] = round($mN[$i], 2); $retroP[] = round($mP[$i], 2); $nbN[] = count($gN[$i]); $nbP[] = count($gP[$i]); }
+
+    if ($EXPORT === 'csv') {
+        $csv = array(array('Mois', 'Contrats ' . $annee, 'A retroceder ' . $annee, 'Contrats ' . $anneePrec, 'A retroceder ' . $anneePrec));
+        for ($i = 1; $i <= 12; $i++) { $csv[] = array($moisLbl[$i - 1], count($gN[$i]), round($mN[$i], 2), count($gP[$i]), round($mP[$i], 2)); }
+        $csv[] = array('Total', $totNbN, round($totRetroN, 2), $totNbP, round($totRetroP, 2));
+        csvOut('production_' . $annee . '.csv', $csv);
+    }
     ?>
     <p class="muted">Production <?php echo h($LABEL); ?> — année <strong><?php echo $annee; ?></strong> (comparée à <?php echo $anneePrec; ?>), basée sur la date de souscription. Montants = total à rétrocéder (commissions RC DR + honoraires).</p>
     <div class="stats">
@@ -356,6 +381,8 @@ if ($vue === 'production') {
         <div class="stat"><b><?php echo euros($totRetroP); ?></b><span>À rétrocéder <?php echo $anneePrec; ?></span></div>
         <div class="stat"><b style="color:<?php echo ($evol !== null && $evol < 0) ? '#c02b2b' : '#1a7d49'; ?>"><?php echo $evol === null ? '—' : ($evol > 0 ? '+' : '') . $evol . ' %'; ?></b><span>Évolution vs <?php echo $anneePrec; ?></span></div>
     </div>
+
+    <p><a href="<?php echo h(lienCsv()); ?>" style="display:inline-block;background:#1a7d49;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none">⬇ Exporter en CSV</a></p>
 
     <div style="display:flex;flex-wrap:wrap;gap:20px;margin-top:16px">
         <div style="flex:1 1 420px;min-width:320px;background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px">
@@ -455,6 +482,17 @@ if ($vue === 'devis') {
     $aujourdhui = strtotime(date('Y-m-d'));
     $totPrime = 0;
     foreach ($rows as $r) { $totPrime += num($r['prix_formule']); }
+
+    if ($EXPORT === 'csv') {
+        $csv = array(array('Date', 'N devis', 'Client', 'Ville', 'Mobile', 'Mail', 'Immat', 'Vehicule', 'Produit', 'Prime', 'Anciennete (j)'));
+        foreach ($rows as $r) {
+            $age = floor(($aujourdhui - strtotime($r['date_demande'])) / 86400);
+            $csv[] = array(dateFr($r['date_demande']), $r['num_garantie'], trim($r['cnom'] . ' ' . $r['cprenom']), $r['cville'],
+                $r['cmobile'], $r['cmail'], $r['immat'], trim($r['marque'] . ' ' . $r['modele']),
+                trim($r['type_contrat'] . ' ' . $r['formule']), num($r['prix_formule']), $age);
+        }
+        csvOut('devis_' . $date_deb . '_' . $date_fin . '.csv', $csv);
+    }
     ?>
     <p class="muted">Devis <?php echo h($LABEL); ?> (demandes sans n° de contrat) du
        <?php echo dateFr($date_deb); ?> au <?php echo dateFr($date_fin); ?>.</p>
@@ -462,6 +500,7 @@ if ($vue === 'devis') {
         <div class="stat"><b><?php echo count($rows); ?></b><span>Devis en attente</span></div>
         <div class="stat"><b><?php echo euros($totPrime); ?></b><span>Primes potentielles</span></div>
     </div>
+    <p><a href="<?php echo h(lienCsv()); ?>" style="display:inline-block;background:#1a7d49;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none">⬇ Exporter en CSV</a></p>
 
     <?php if (!$rows): ?>
         <p class="muted">Aucun devis en attente sur cette période.</p>
@@ -583,6 +622,24 @@ if ($vue === 'renouvellements') {
 
     $nbVeh = count($multi); $nbContrats = 0; $totPrime = 0;
     foreach ($multi as $g) { $nbContrats += count($g['contrats']); $totPrime += $g['total']; }
+
+    if ($EXPORT === 'vehicules') {
+        $csv = array(array('Immat', 'Vehicule', 'Client', 'Ville', 'Societe', 'Nb contrats vehicule', 'N contrat', 'Type', 'Formule', 'Date effet', 'Echeance', 'Duree', 'Prime'));
+        foreach ($multi as $g) {
+            foreach ($g['contrats'] as $ct) {
+                $csv[] = array($g['immat'], $g['vehicule'], $g['client'], $g['ville'], $g['societe'], count($g['contrats']),
+                    $ct['num_contrat'], $ct['type_contrat'], $ct['formule'], dateFr($ct['date_effet']), dateFr($ct['date_fin']), $ct['duree'], num($ct['prix_formule']));
+            }
+        }
+        csvOut('renouvellements_vehicules.csv', $csv);
+    }
+    if ($EXPORT === 'csv') {
+        $csv = array(array('Client', 'Ville', 'Societe', 'Nb contrats', 'Nb vehicules', 'Primes cumulees', 'Telephone', 'Mobile', 'Mail'));
+        foreach ($fideles as $c) {
+            $csv[] = array($c['client'], $c['ville'], $c['societe'], $c['nb'], count($c['vehs']), round($c['total'], 2), $c['tel'], $c['mobile'], $c['mail']);
+        }
+        csvOut('clients_fideles.csv', $csv);
+    }
     ?>
     <p class="muted"><?php echo h($LABEL); ?> — souscriptions du <?php echo dateFr($date_deb); ?> au <?php echo dateFr($date_fin); ?> (contrats annulés exclus).</p>
     <div class="stats">
@@ -593,6 +650,7 @@ if ($vue === 'renouvellements') {
     </div>
 
     <h2>Renouvellements — même véhicule</h2>
+    <p><a href="<?php echo h(lienCsv(array('export' => 'vehicules'))); ?>" style="display:inline-block;background:#1a7d49;color:#fff;padding:7px 13px;border-radius:6px;text-decoration:none;font-size:14px">⬇ Exporter (véhicules)</a></p>
     <?php if (!$multi): ?>
         <p class="muted">Aucun véhicule avec plusieurs contrats sur cette période.
         Élargis la période (ex. 01/01/2026 → 31/12/2026).</p>
@@ -633,6 +691,7 @@ if ($vue === 'renouvellements') {
     <?php endif; ?>
 
     <h2>Clients fidèles — plusieurs contrats (véhicule différent ou non)</h2>
+    <p><a href="<?php echo h(lienCsv()); ?>" style="display:inline-block;background:#1a7d49;color:#fff;padding:7px 13px;border-radius:6px;text-decoration:none;font-size:14px">⬇ Exporter (clients fidèles)</a></p>
     <?php if (!$fideles): ?>
         <p class="muted">Aucun client avec plusieurs contrats sur cette période.</p>
     <?php else: ?>
@@ -774,6 +833,15 @@ if ($tri === 'date_asc') {
 } else { // date_desc
     usort($lignes, function ($a, $b) { return strtotime($b['dr']) - strtotime($a['dr']); });
 }
+
+if ($EXPORT === 'csv') {
+    $csv = array(array('Etat', 'ID Gar', 'ID Reg', 'Regle le', 'Demande', 'N contrat', 'Duree', 'Client', 'Societe', 'Banque', 'PV client', 'Retro RC DR', 'Retro Honoraires', 'Total retro', 'Info'));
+    foreach ($lignes as $l) {
+        $csv[] = array($l['etat'], $l['gid'], $l['rid'], dateFr($l['dr']), dateFr($l['dd']), $l['nc'], $l['duree'], $l['client'], $l['societe'],
+            $l['banque'], $l['pvc'], $l['rcdr'], $l['hono'], $l['rcdr'] + $l['hono'], $l['info']);
+    }
+    csvOut('bordereau_' . $date_deb . '_' . $date_fin . '.csv', $csv);
+}
 ?>
 
 <div class="stats">
@@ -784,6 +852,7 @@ if ($tri === 'date_asc') {
     <div class="stat hl"><b><?php echo euros($totRetro); ?></b><span>Total à rétrocéder à <?php echo h($LABEL); ?></span></div>
 </div>
 
+<p><a href="<?php echo h(lienCsv()); ?>" style="display:inline-block;background:#1a7d49;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none">⬇ Exporter en CSV</a></p>
 <div class="legende">
     <span style="background:#FFF0F0">En cours (C)</span>
     <span style="background:#FFD0F0">Annulé / autre</span>
