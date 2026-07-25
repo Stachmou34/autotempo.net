@@ -509,14 +509,18 @@ if ($vue === 'renouvellements') {
         $rows = array();
     } else {
         $in = implode(',', array_fill(0, count($idsUsed), '?'));
-        $sql = 'SELECT g.id AS gid, g.id_app, g.id_vehi, g.num_contrat, g.type_contrat, g.formule, g.duree,
-                       g.date_effet, g.date_fin, g.date_demande, g.prix_formule,
+        // Jointure sur le règlement principal (g.id_reglement) pour connaître l'état.
+        // On exclut les contrats annulés (etat = 'A').
+        $sql = 'SELECT g.id AS gid, g.id_app, g.id_vehi, g.id_cli, g.num_contrat, g.type_contrat, g.formule, g.duree,
+                       g.date_effet, g.date_fin, g.date_demande, g.prix_formule, r.etat AS etat,
                        cl.nom AS client_nom, cl.prenom AS client_prenom, cl.ville AS client_ville,
                        v.immatriculation, v.marque, v.modele
                 FROM jl_garantie g
                 LEFT JOIN jl_client cl ON cl.id = g.id_cli
                 LEFT JOIN jl_vehicule v ON v.id = g.id_vehi
-                WHERE g.id_app IN (' . $in . ") AND g.num_contrat <> '' AND g.id_vehi > 0
+                LEFT JOIN jl_reglement r ON r.id = g.id_reglement
+                WHERE g.id_app IN (' . $in . ") AND g.num_contrat <> ''
+                      AND (r.etat IS NULL OR r.etat <> 'A')
                       AND DATE(g.date_demande) BETWEEN ? AND ?
                 ORDER BY g.id_vehi, g.date_effet";
         $st = $pdo->prepare($sql);
@@ -525,45 +529,68 @@ if ($vue === 'renouvellements') {
         $rows = $st->fetchAll();
     }
 
-    // Regroupement par véhicule
+    // Regroupement par VÉHICULE (renouvellement même véhicule)
     $groupes = array();
+    // Regroupement par CLIENT (fidélité, véhicule différent ou non)
+    $parClient = array();
     foreach ($rows as $r) {
+        $soc = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['societe'] : '';
+
+        // — par véhicule —
         $k = (int) $r['id_vehi'];
-        if (!isset($groupes[$k])) {
-            $groupes[$k] = array(
-                'id_vehi'  => $k,
-                'immat'    => $r['immatriculation'],
-                'vehicule' => trim($r['marque'] . ' ' . $r['modele']),
-                'client'   => trim($r['client_nom'] . ' ' . $r['client_prenom']),
-                'ville'    => $r['client_ville'],
-                'societe'  => isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['societe'] : '',
-                'contrats' => array(),
-                'total'    => 0,
-            );
+        if ($k > 0) {
+            if (!isset($groupes[$k])) {
+                $groupes[$k] = array(
+                    'id_vehi' => $k, 'immat' => $r['immatriculation'],
+                    'vehicule' => trim($r['marque'] . ' ' . $r['modele']),
+                    'client' => trim($r['client_nom'] . ' ' . $r['client_prenom']),
+                    'ville' => $r['client_ville'], 'societe' => $soc,
+                    'contrats' => array(), 'total' => 0,
+                );
+            }
+            $groupes[$k]['contrats'][] = $r;
+            $groupes[$k]['total'] += num($r['prix_formule']);
         }
-        $groupes[$k]['contrats'][] = $r;
-        $groupes[$k]['total'] += num($r['prix_formule']);
+
+        // — par client —
+        $cid = (int) $r['id_cli'];
+        if ($cid > 0) {
+            if (!isset($parClient[$cid])) {
+                $parClient[$cid] = array(
+                    'client' => trim($r['client_nom'] . ' ' . $r['client_prenom']),
+                    'ville' => $r['client_ville'], 'societe' => $soc,
+                    'nb' => 0, 'vehs' => array(), 'total' => 0,
+                );
+            }
+            $parClient[$cid]['nb']++;
+            if ($k > 0) { $parClient[$cid]['vehs'][$k] = 1; }
+            $parClient[$cid]['total'] += num($r['prix_formule']);
+        }
     }
-    // Ne garder que les véhicules avec 2 contrats ou plus (= renouvellements)
+
     $multi = array();
     foreach ($groupes as $g) { if (count($g['contrats']) >= 2) { $multi[] = $g; } }
-    // Trier : le plus de contrats d'abord
     usort($multi, function ($a, $b) { return count($b['contrats']) - count($a['contrats']); });
+
+    $fideles = array();
+    foreach ($parClient as $c) { if ($c['nb'] >= 2) { $fideles[] = $c; } }
+    usort($fideles, function ($a, $b) { return $b['nb'] - $a['nb']; });
 
     $nbVeh = count($multi); $nbContrats = 0; $totPrime = 0;
     foreach ($multi as $g) { $nbContrats += count($g['contrats']); $totPrime += $g['total']; }
     ?>
-    <p class="muted">Clients <?php echo h($LABEL); ?> ayant repris <strong>plusieurs contrats pour le même véhicule</strong>
-       (souscriptions du <?php echo dateFr($date_deb); ?> au <?php echo dateFr($date_fin); ?>).</p>
+    <p class="muted"><?php echo h($LABEL); ?> — souscriptions du <?php echo dateFr($date_deb); ?> au <?php echo dateFr($date_fin); ?> (contrats annulés exclus).</p>
     <div class="stats">
         <div class="stat"><b><?php echo $nbVeh; ?></b><span>Véhicules renouvelés</span></div>
-        <div class="stat"><b><?php echo $nbContrats; ?></b><span>Contrats concernés</span></div>
-        <div class="stat"><b><?php echo euros($totPrime); ?></b><span>Primes cumulées</span></div>
+        <div class="stat"><b><?php echo count($fideles); ?></b><span>Clients fidèles</span></div>
+        <div class="stat"><b><?php echo $nbContrats; ?></b><span>Contrats (même véhicule)</span></div>
+        <div class="stat"><b><?php echo euros($totPrime); ?></b><span>Primes cumulées (véhicule)</span></div>
     </div>
 
+    <h2>Renouvellements — même véhicule</h2>
     <?php if (!$multi): ?>
         <p class="muted">Aucun véhicule avec plusieurs contrats sur cette période.
-        Élargis la période (ex. 01/01/2026 → 31/12/2026) pour voir les renouvellements sur l'année.</p>
+        Élargis la période (ex. 01/01/2026 → 31/12/2026).</p>
     <?php else: ?>
     <div style="overflow:auto">
     <table>
@@ -600,7 +627,33 @@ if ($vue === 'renouvellements') {
     </div>
     <?php endif; ?>
 
-    <p class="tools">Outil : <a href="?t=jl_garantie">jl_garantie</a> · <a href="?t=jl_vehicule">jl_vehicule</a></p>
+    <h2>Clients fidèles — plusieurs contrats (véhicule différent ou non)</h2>
+    <?php if (!$fideles): ?>
+        <p class="muted">Aucun client avec plusieurs contrats sur cette période.</p>
+    <?php else: ?>
+    <div style="overflow:auto">
+    <table>
+        <thead><tr>
+            <th>Client</th><th>Ville</th><th>Société</th>
+            <th class="ctr">Nb contrats</th><th class="ctr">Nb véhicules</th><th class="num">Primes cumulées</th>
+        </tr></thead>
+        <tbody>
+        <?php foreach ($fideles as $c): ?>
+            <tr>
+                <td><strong><?php echo h($c['client']); ?></strong></td>
+                <td><?php echo h($c['ville']); ?></td>
+                <td><?php echo h($c['societe']); ?></td>
+                <td class="ctr"><strong style="color:#1f5eff"><?php echo $c['nb']; ?></strong></td>
+                <td class="ctr"><?php echo count($c['vehs']); ?></td>
+                <td class="num"><?php echo euros($c['total']); ?></td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+    </div>
+    <?php endif; ?>
+
+    <p class="tools">Contrat annulé = règlement principal en état « A ». <a href="?t=jl_garantie">jl_garantie</a> · <a href="?t=jl_vehicule">jl_vehicule</a></p>
     </body></html>
     <?php
     exit;
