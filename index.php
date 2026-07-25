@@ -44,12 +44,13 @@ function entete($titre) {
        . '<style>' . css() . '</style></head><body>';
 }
 function css() {
-    return 'body{font-family:system-ui,Arial,sans-serif;max-width:1400px;margin:0 auto;padding:0 16px 40px;line-height:1.5;color:#222;background:#f4f6fb}'
+    return 'body{font-family:system-ui,Arial,sans-serif;max-width:1720px;margin:0 auto;padding:0 16px 40px;line-height:1.5;color:#222;background:#f4f6fb}'
       . 'h1{color:#1f5eff;margin-bottom:2px} h2{margin-top:24px;border-bottom:1px solid #e3e8f0;padding-bottom:6px}'
       . 'code{background:#eef;padding:2px 6px;border-radius:4px} pre{background:#f6f8fc;border:1px solid #dde3ee;padding:12px;border-radius:8px;overflow:auto;white-space:pre-wrap}'
       . '.ok{color:#1a7d49;font-weight:bold} .no{color:#c02b2b;font-weight:bold} .muted{color:#888}'
-      . 'table{border-collapse:collapse;width:100%;margin-top:10px;background:#fff;font-size:13px}'
-      . 'th,td{border:1px solid #e3e8f0;padding:6px 9px;text-align:left;white-space:nowrap}'
+      . '.nav{margin:12px 0 6px;border-bottom:2px solid #e3e8f0} .nav a{display:inline-block;padding:8px 16px;text-decoration:none;color:#555;font-weight:600;border-bottom:2px solid transparent;margin-bottom:-2px} .nav a.on{color:#1f5eff;border-bottom-color:#1f5eff}'
+      . 'table{border-collapse:collapse;width:100%;margin-top:10px;background:#fff;font-size:12px}'
+      . 'th,td{border:1px solid #e3e8f0;padding:5px 7px;text-align:left;white-space:nowrap}'
       . 'th{background:#f7f9fd} .num{text-align:right} .ctr{text-align:center}'
       . '.box{background:#fff;border:1px solid #dde3ee;border-radius:8px;padding:14px 18px;margin-top:20px}'
       . '.stats{display:flex;gap:14px;flex-wrap:wrap;margin:18px 0}'
@@ -228,6 +229,10 @@ foreach ($apporteurs as $a) {
 }
 echo '<p class="muted">Sociétés : <strong>' . h(implode(' · ', $societes)) . '</strong></p>';
 
+// Vue courante (BI)
+$vue = isset($_GET['vue']) ? $_GET['vue'] : 'bordereau';
+if (!in_array($vue, array('bordereau', 'renouvellements'), true)) { $vue = 'bordereau'; }
+
 // Filtres : etat, tri, periode, societe
 $etatLabels = array('P' => 'Payé', 'C' => 'En cours', 'N' => 'Non réglé', 'R' => 'Remboursé', 'A' => 'Annulé');
 $etat_filtre = isset($_GET['etat_filtre']) ? $_GET['etat_filtre'] : 'TOUS';
@@ -244,6 +249,128 @@ if ($soc_filtre !== 'TOUTES') {
         if ($info['societe'] === $soc_filtre) { $idsUsed[] = $aid; }
     }
 }
+
+// Navigation entre tableaux de bord (BI)
+echo '<div class="nav">'
+   . '<a href="?vue=bordereau"' . ($vue === 'bordereau' ? ' class="on"' : '') . '>Bordereau rétrocession</a>'
+   . '<a href="?vue=renouvellements"' . ($vue === 'renouvellements' ? ' class="on"' : '') . '>Renouvellements</a>'
+   . '</div>';
+
+// Formulaire de filtres commun (période + société), + état/tri pour le bordereau
+$labelPeriode = ($vue === 'renouvellements') ? 'Échéance entre' : 'Période';
+?>
+<form class="filtres" method="get">
+    <input type="hidden" name="vue" value="<?php echo h($vue); ?>">
+    <?php echo $labelPeriode; ?> : <input type="date" name="date_deb" value="<?php echo h($date_deb); ?>">
+    → <input type="date" name="date_fin" value="<?php echo h($date_fin); ?>">
+    &nbsp; Société :
+    <select name="soc">
+        <option value="TOUTES"<?php echo $soc_filtre === 'TOUTES' ? ' selected' : ''; ?>>Toutes</option>
+        <?php foreach ($societes as $s): ?>
+            <option value="<?php echo h($s); ?>"<?php echo $soc_filtre === $s ? ' selected' : ''; ?>><?php echo h($s); ?></option>
+        <?php endforeach; ?>
+    </select>
+    <?php if ($vue === 'bordereau'): ?>
+    <br>
+    État :
+    <select name="etat_filtre">
+        <option value="TOUS"<?php echo $etat_filtre === 'TOUS' ? ' selected' : ''; ?>>Tous</option>
+        <?php foreach ($etatLabels as $k => $lib): ?>
+            <option value="<?php echo $k; ?>"<?php echo $etat_filtre === $k ? ' selected' : ''; ?>><?php echo $k . ' — ' . $lib; ?></option>
+        <?php endforeach; ?>
+    </select>
+    &nbsp; Trier par :
+    <select name="tri">
+        <option value="date_desc"<?php echo $tri === 'date_desc' ? ' selected' : ''; ?>>Date (récent → ancien)</option>
+        <option value="date_asc"<?php echo $tri === 'date_asc' ? ' selected' : ''; ?>>Date (ancien → récent)</option>
+        <option value="societe"<?php echo $tri === 'societe' ? ' selected' : ''; ?>>Société</option>
+    </select>
+    <?php endif; ?>
+    <button type="submit">Appliquer</button>
+</form>
+<?php
+
+// =================================================================
+//  VUE RENOUVELLEMENTS
+// =================================================================
+if ($vue === 'renouvellements') {
+    if (!$idsUsed) {
+        $rows = array();
+    } else {
+        $in = implode(',', array_fill(0, count($idsUsed), '?'));
+        $sql = 'SELECT g.id AS gid, g.id_app, g.num_contrat, g.type_contrat, g.formule, g.duree,
+                       g.date_effet, g.date_fin, g.prix_formule,
+                       cl.nom AS client_nom, cl.prenom AS client_prenom, cl.ville AS client_ville
+                FROM jl_garantie g
+                LEFT JOIN jl_client cl ON cl.id = g.id_cli
+                WHERE g.id_app IN (' . $in . ") AND g.num_contrat <> '' AND g.date_fin BETWEEN ? AND ?
+                ORDER BY g.date_fin ASC";
+        $st = $pdo->prepare($sql);
+        $params = $idsUsed; $params[] = $date_deb; $params[] = $date_fin;
+        $st->execute($params);
+        $rows = $st->fetchAll();
+    }
+
+    $aujourdhui = strtotime(date('Y-m-d'));
+    $nb = count($rows); $totPrime = 0; $nbBientot = 0; $nbExpire = 0;
+    foreach ($rows as $r) {
+        $totPrime += num($r['prix_formule']);
+        $j = floor((strtotime($r['date_fin']) - $aujourdhui) / 86400);
+        if ($j < 0) { $nbExpire++; } elseif ($j <= 30) { $nbBientot++; }
+    }
+    ?>
+    <p class="muted">Contrats <?php echo h($LABEL); ?> dont l'échéance tombe entre le
+       <?php echo dateFr($date_deb); ?> et le <?php echo dateFr($date_fin); ?>.</p>
+    <div class="stats">
+        <div class="stat"><b><?php echo $nb; ?></b><span>Contrats à échéance</span></div>
+        <div class="stat"><b><?php echo euros($totPrime); ?></b><span>Primes cumulées</span></div>
+        <div class="stat"><b style="color:#d98a00"><?php echo $nbBientot; ?></b><span>Échéance sous 30 j</span></div>
+        <div class="stat"><b style="color:#c02b2b"><?php echo $nbExpire; ?></b><span>Déjà échus</span></div>
+    </div>
+
+    <?php if (!$rows): ?>
+        <p class="muted">Aucun contrat à échéance sur cette période.</p>
+    <?php else: ?>
+    <div style="overflow:auto">
+    <table>
+        <thead><tr>
+            <th>N° contrat</th><th>Client</th><th>Ville</th><th>Société</th>
+            <th>Type</th><th>Formule</th><th>Date effet</th><th>Échéance</th><th class="ctr">Jours</th><th class="num">Prime</th>
+        </tr></thead>
+        <tbody>
+        <?php foreach ($rows as $r):
+            $soc = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['societe'] : '';
+            $j = floor((strtotime($r['date_fin']) - $aujourdhui) / 86400);
+            $jaff = ($j < 0) ? 'Échu (' . abs($j) . ' j)' : $j . ' j';
+            $col = ($j < 0) ? '#ffdede' : (($j <= 30) ? '#fff2d9' : '#fff');
+        ?>
+            <tr style="background:<?php echo $col; ?>">
+                <td><?php echo h($r['num_contrat']); ?></td>
+                <td><?php echo h(trim($r['client_nom'] . ' ' . $r['client_prenom'])); ?></td>
+                <td><?php echo h($r['client_ville']); ?></td>
+                <td><?php echo h($soc); ?></td>
+                <td><?php echo h($r['type_contrat']); ?></td>
+                <td><?php echo h($r['formule']); ?></td>
+                <td><?php echo dateFr($r['date_effet']); ?></td>
+                <td><strong><?php echo dateFr($r['date_fin']); ?></strong></td>
+                <td class="ctr"><?php echo h($jaff); ?></td>
+                <td class="num"><?php echo euros(num($r['prix_formule'])); ?></td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+    </div>
+    <?php endif; ?>
+
+    <p class="tools">Outil : <a href="?t=jl_garantie">jl_garantie</a> · <a href="?t=jl_renouvelements">jl_renouvelements</a></p>
+    </body></html>
+    <?php
+    exit;
+}
+
+// =================================================================
+//  VUE BORDEREAU (par défaut)
+// =================================================================
 
 // ── Garanties (contrats) sur la période + reglements ──────────────
 if (!$idsUsed) {
@@ -331,37 +458,11 @@ if ($tri === 'date_asc') {
     <div class="stat hl"><b><?php echo euros($totRetro); ?></b><span>Total à rétrocéder à <?php echo h($LABEL); ?></span></div>
 </div>
 
-<form class="filtres" method="get">
-    Période : <input type="date" name="date_deb" value="<?php echo h($date_deb); ?>">
-    → <input type="date" name="date_fin" value="<?php echo h($date_fin); ?>">
-    &nbsp; Société :
-    <select name="soc">
-        <option value="TOUTES"<?php echo $soc_filtre === 'TOUTES' ? ' selected' : ''; ?>>Toutes</option>
-        <?php foreach ($societes as $s): ?>
-            <option value="<?php echo h($s); ?>"<?php echo $soc_filtre === $s ? ' selected' : ''; ?>><?php echo h($s); ?></option>
-        <?php endforeach; ?>
-    </select>
-    <br>
-    État :
-    <select name="etat_filtre">
-        <option value="TOUS"<?php echo $etat_filtre === 'TOUS' ? ' selected' : ''; ?>>Tous</option>
-        <?php foreach ($etatLabels as $k => $lib): ?>
-            <option value="<?php echo $k; ?>"<?php echo $etat_filtre === $k ? ' selected' : ''; ?>><?php echo $k . ' — ' . $lib; ?></option>
-        <?php endforeach; ?>
-    </select>
-    &nbsp; Trier par :
-    <select name="tri">
-        <option value="date_desc"<?php echo $tri === 'date_desc' ? ' selected' : ''; ?>>Date (récent → ancien)</option>
-        <option value="date_asc"<?php echo $tri === 'date_asc' ? ' selected' : ''; ?>>Date (ancien → récent)</option>
-        <option value="societe"<?php echo $tri === 'societe' ? ' selected' : ''; ?>>Société</option>
-    </select>
-    <button type="submit">Appliquer</button>
-    <div class="legende">
-        <span style="background:#FFF0F0">En cours (C)</span>
-        <span style="background:#FFD0F0">Annulé / autre</span>
-        <span style="background:#fff;border:1px solid #ddd">Payé (P)</span>
-    </div>
-</form>
+<div class="legende">
+    <span style="background:#FFF0F0">En cours (C)</span>
+    <span style="background:#FFD0F0">Annulé / autre</span>
+    <span style="background:#fff;border:1px solid #ddd">Payé (P)</span>
+</div>
 
 <?php if (!$lignes): ?>
     <p class="muted">Aucun contrat pour <?php echo $soc_filtre === 'TOUTES' ? 'cet apporteur' : h($soc_filtre); ?>
