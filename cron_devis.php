@@ -19,7 +19,7 @@ if ($last === 0) {
     $s->execute($ids);
     $row = $s->fetch();
     file_put_contents($stateFile, (int) $row['m']);
-    echo "Initialisé au dernier id = " . (int) $row['m'] . "\n";
+    logCron('cron_devis', 'Initialisation : dernier id = ' . (int) $row['m'] . ' (aucun email au 1er passage)');
     exit(0);
 }
 
@@ -36,7 +36,7 @@ $params = $ids; $params[] = $last;
 $st->execute($params);
 $news = $st->fetchAll();
 
-if (!$news) { echo "Aucun nouveau devis.\n"; exit(0); }
+if (!$news) { logCron('cron_devis', 'Aucun nouveau devis (dernier id vu = ' . $last . ')'); exit(0); }
 
 $lignes = '';
 foreach ($news as $d) {
@@ -70,4 +70,4 @@ $ok = envoyerMail($EMAIL_TO, $EMAIL_FROM, $sujet, gabaritMail('Nouveaux devis', 
 // Mémorise le dernier id traité.
 $dernier = (int) $news[count($news) - 1]['id'];
 file_put_contents($stateFile, $dernier);
-echo ($ok ? 'Email envoyé' : 'Échec envoi') . ' — ' . count($news) . " devis, dernier id = $dernier\n";
+logCron('cron_devis', ($ok ? 'Email envoyé' : 'ECHEC envoi mail') . ' à ' . $EMAIL_TO . ' — ' . count($news) . ' nouveau(x) devis, dernier id = ' . $dernier);

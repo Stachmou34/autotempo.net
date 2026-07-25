@@ -51,6 +51,14 @@ function envoyerMail($to, $from, $sujet, $html) {
     return mail($to, $sujetEnc, $html, $headers);
 }
 
+/** Journalise un évènement dans logs/<nom>.log (avec horodatage). */
+function logCron($nom, $msg) {
+    $dir = __DIR__ . '/logs';
+    if (!is_dir($dir)) { @mkdir($dir, 0755); }
+    @file_put_contents($dir . '/' . $nom . '.log', date('Y-m-d H:i:s') . '  ' . $msg . "\n", FILE_APPEND);
+    echo date('H:i:s') . '  ' . $msg . "\n";
+}
+
 /** Gabarit HTML commun d'un email. */
 function gabaritMail($titre, $corps) {
     return '<div style="font-family:Arial,sans-serif;color:#222;max-width:800px">'
