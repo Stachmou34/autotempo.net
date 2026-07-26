@@ -15,7 +15,7 @@ $sql = "SELECT g.id, g.id_app, g.num_garantie, g.num_contrat, g.type_contrat, g.
                g.prix_assitance, g.prix_pj, g.id_lb2,
                r.note3, r.pa, r.marge AS r_marge, r.honoraire AS r_hono, r.etat,
                cl.nom AS cnom, cl.prenom AS cprenom, cl.ville AS cville,
-               v.immatriculation AS immat, v.marque AS marque, v.modele AS modele
+               v.immatriculation AS immat, v.marque AS marque, v.modele AS modele, v.categorie AS categorie
         FROM jl_garantie g
         LEFT JOIN jl_client cl ON cl.id = g.id_cli
         LEFT JOIN jl_vehicule v ON v.id = g.id_vehi
