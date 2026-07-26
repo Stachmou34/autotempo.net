@@ -44,10 +44,12 @@ foreach ($stmt->fetchAll() as $a) {
 
 /** Parse un nombre "1 234,56" -> float. */
 function numv($v) { return (float) str_replace(array(' ', ','), array('', '.'), (string) $v); }
+/** Catégories véhicule soumises à la règle "1 € camion" en marque blanche. */
+function catCam($c) { return in_array((string) $c, array('TCP', 'CAM3', 'CAM4', 'REM2', 'REM3', 'TRA'), true); }
 
 /**
  * Rétro globale d'un contrat (RC DR + honoraires), même calcul que le bordereau.
- * $r doit contenir : note3, pa, r_marge, r_hono, prix_assitance, prix_pj, id_lb2, etat.
+ * $r doit contenir : note3, pa, r_marge, r_hono, prix_assitance, prix_pj, id_lb2, etat, categorie.
  */
 function retroContrat($r, $mb) {
     $etat = isset($r['etat']) ? $r['etat'] : '';
@@ -57,8 +59,13 @@ function retroContrat($r, $mb) {
     $pv = $prime_esc + numv(isset($r['r_marge']) ? $r['r_marge'] : 0) + numv(isset($r['r_hono']) ? $r['r_hono'] : 0);
     $prix_ass = numv(isset($r['prix_assitance']) ? $r['prix_assitance'] : 0);
     $prix_dr = numv(isset($r['prix_pj']) ? $r['prix_pj'] : 0);
-    if ($mb == 1) { $rcdr = round(($pv - $prime_esc) * 0.4764, 2); $hono = round(numv(isset($r['id_lb2']) ? $r['id_lb2'] : 0), 2); }
-    else          { $rcdr = round($montant - $pv - $prix_ass - $prix_dr, 2); $hono = 0; }
+    if ($mb == 1) {
+        $base = catCam(isset($r['categorie']) ? $r['categorie'] : '') ? ($pv - 1) : $pv;
+        $rcdr = round(($base - $prime_esc) * 0.4764, 2);
+        $hono = round(numv(isset($r['id_lb2']) ? $r['id_lb2'] : 0), 2);
+    } else {
+        $rcdr = round($montant - $pv - $prix_ass - $prix_dr, 2); $hono = 0;
+    }
     if ($rcdr <= 0) { $rcdr = 0; } if ($hono <= 0) { $hono = 0; }
     return $rcdr + $hono;
 }

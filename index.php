@@ -20,6 +20,8 @@ $authFile  = $DIR . '/auth.ini';
 
 function h($s) { return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'); }
 function num($v) { return (float) str_replace(array(' ', ','), array('', '.'), (string) $v); }
+/** Catégories véhicule soumises à la règle "1 € camion" en marque blanche. */
+function catCam($c) { return in_array((string) $c, array('TCP', 'CAM3', 'CAM4', 'REM2', 'REM3', 'TRA'), true); }
 /** Sort un CSV (jette le HTML bufferisé) et arrête le script. $rows[0] = entêtes. */
 function csvOut($filename, $rows) {
     while (ob_get_level() > 0) { ob_end_clean(); }
@@ -331,9 +333,10 @@ if ($vue === 'production') {
     } else {
         $in = implode(',', array_fill(0, count($idsUsed), '?'));
         $sql = "SELECT g.id AS gid, g.id_app, g.date_demande, g.prix_assitance, g.prix_pj, g.id_lb2,
-                       r.note3, r.pa, r.marge AS r_marge, r.honoraire AS r_hono, r.etat
+                       r.note3, r.pa, r.marge AS r_marge, r.honoraire AS r_hono, r.etat, v.categorie AS categorie
                 FROM jl_garantie g
                 JOIN jl_reglement r ON r.id_garantie = g.id
+                LEFT JOIN jl_vehicule v ON v.id = g.id_vehi
                 WHERE g.id_app IN ($in) AND g.num_contrat <> '' AND YEAR(g.date_demande) IN (?, ?)";
         $st = $pdo->prepare($sql);
         $params = $idsUsed; $params[] = $annee; $params[] = $anneePrec;
@@ -352,7 +355,7 @@ if ($vue === 'production') {
         $montant = num($r['note3']); if ($etat === 'A' || $etat === 'R') { $montant = 0; }
         $prime_esc = num($r['pa']); $pv = $prime_esc + num($r['r_marge']) + num($r['r_hono']);
         $prix_ass = num($r['prix_assitance']); $prix_dr = num($r['prix_pj']);
-        if ($mb == 1) { $rcdr = round(($pv - $prime_esc) * 0.4764, 2); $hono = round(num($r['id_lb2']), 2); }
+        if ($mb == 1) { $base = catCam($r['categorie']) ? ($pv - 1) : $pv; $rcdr = round(($base - $prime_esc) * 0.4764, 2); $hono = round(num($r['id_lb2']), 2); }
         else          { $rcdr = round($montant - $pv - $prix_ass - $prix_dr, 2); $hono = 0; }
         if ($rcdr <= 0) { $rcdr = 0; } if ($hono <= 0) { $hono = 0; }
         $retro = $rcdr + $hono;
@@ -780,10 +783,11 @@ if (!$idsUsed) {
                    g.prix_achat AS g_pa, g.marge AS g_marge, g.honoraire AS g_hono, g.id_lb2,
                    g.prix_assitance, g.prix_pj,
                    r.id AS rid, r.date_reglement, r.note3, r.etat, r.note2, r.pa, r.marge AS r_marge, r.honoraire AS r_hono,
-                   cl.nom AS client_nom, cl.prenom AS client_prenom
+                   cl.nom AS client_nom, cl.prenom AS client_prenom, v.categorie AS categorie
             FROM jl_garantie g
             JOIN jl_reglement r ON r.id_garantie = g.id
             LEFT JOIN jl_client cl ON cl.id = g.id_cli
+            LEFT JOIN jl_vehicule v ON v.id = g.id_vehi
             WHERE g.id_app IN (' . $in . ") AND g.num_contrat <> '' AND DATE(g.date_demande) BETWEEN ? AND ?
             ORDER BY r.date_reglement DESC, g.id DESC";
     $st = $pdo->prepare($sql);
@@ -815,7 +819,8 @@ foreach ($brut as $rw) {
 
     // Rétro RC DR (commissions) + Rétro Honoraires (retro_sup = id_lb2 en marque blanche)
     if ($mb == 1) {
-        $retro_rcdr = round(($pv - $prime_esc) * 0.4764, 2);   // marque blanche
+        $base = catCam($rw['categorie']) ? ($pv - 1) : $pv;   // règle "1 € camion" (TCP/CAM/REM/TRA)
+        $retro_rcdr = round(($base - $prime_esc) * 0.4764, 2);
         $retro_hono = round(num($rw['id_lb2']), 2);
     } else {
         $retro_rcdr = round($montant_regle - $pv - $prix_ass - $prix_dr, 2);
