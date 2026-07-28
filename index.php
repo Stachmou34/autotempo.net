@@ -489,7 +489,7 @@ if ($vue === 'devis') {
     // URL JLASSURE (modifiable dans db.ini : jlassure_url = "...garantie_modif.php?id={id}")
     $jlUrlTpl = (isset($cfg['jlassure_url']) && $cfg['jlassure_url'] !== '')
         ? $cfg['jlassure_url']
-        : 'https://www.jlassure.com/jlassure_fic/admin/garantie_modif.php?id={id}';
+        : 'https://www.jlassure.com/sousfiche/gestion/garantie_modif.php?id={id}';
 
     if ($EXPORT === 'csv') {
         $csv = array(array('Date', 'N devis', 'Societe', 'Client', 'Ville', 'Mobile', 'Mail', 'Immat', 'Vehicule', 'Produit', 'Prime', 'Anciennete (j)', 'Lien JLASSURE'));
