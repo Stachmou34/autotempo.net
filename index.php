@@ -486,13 +486,20 @@ if ($vue === 'devis') {
     $totPrime = 0;
     foreach ($rows as $r) { $totPrime += num($r['prix_formule']); }
 
+    // URL JLASSURE (modifiable dans db.ini : jlassure_url = "...garantie_modif.php?id={id}")
+    $jlUrlTpl = (isset($cfg['jlassure_url']) && $cfg['jlassure_url'] !== '')
+        ? $cfg['jlassure_url']
+        : 'https://www.jlassure.com/jlassure_fic/admin/garantie_modif.php?id={id}';
+
     if ($EXPORT === 'csv') {
-        $csv = array(array('Date', 'N devis', 'Client', 'Ville', 'Mobile', 'Mail', 'Immat', 'Vehicule', 'Produit', 'Prime', 'Anciennete (j)'));
+        $csv = array(array('Date', 'N devis', 'Societe', 'Client', 'Ville', 'Mobile', 'Mail', 'Immat', 'Vehicule', 'Produit', 'Prime', 'Anciennete (j)', 'Lien JLASSURE'));
         foreach ($rows as $r) {
             $age = floor(($aujourdhui - strtotime($r['date_demande'])) / 86400);
-            $csv[] = array(dateFr($r['date_demande']), $r['num_garantie'], trim($r['cnom'] . ' ' . $r['cprenom']), $r['cville'],
+            $soc = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['societe'] : '';
+            $csv[] = array(dateFr($r['date_demande']), $r['num_garantie'], $soc, trim($r['cnom'] . ' ' . $r['cprenom']), $r['cville'],
                 $r['cmobile'], $r['cmail'], $r['immat'], trim($r['marque'] . ' ' . $r['modele']),
-                trim($r['type_contrat'] . ' ' . $r['formule']), num($r['prix_formule']), $age);
+                trim($r['type_contrat'] . ' ' . $r['formule']), num($r['prix_formule']), $age,
+                str_replace('{id}', (int) $r['id'], $jlUrlTpl));
         }
         csvOut('devis_' . $date_deb . '_' . $date_fin . '.csv', $csv);
     }
@@ -511,7 +518,7 @@ if ($vue === 'devis') {
     <div style="overflow:auto">
     <table>
         <thead><tr>
-            <th>Date</th><th>N° devis</th><th>Client</th><th>Ville</th><th>Contact</th>
+            <th>Date</th><th>N° devis</th><th>Société</th><th>Client</th><th>Ville</th><th>Contact</th>
             <th>Véhicule</th><th>Produit</th><th class="num">Prime</th><th class="ctr">Ancienneté</th>
         </tr></thead>
         <tbody>
@@ -519,10 +526,13 @@ if ($vue === 'devis') {
             $veh = trim($r['marque'] . ' ' . $r['modele']);
             $age = floor(($aujourdhui - strtotime($r['date_demande'])) / 86400);
             $bg = ($age > 7) ? '#fff2d9' : '#fff';
+            $soc = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['societe'] : '';
+            $lienJl = str_replace('{id}', (int) $r['id'], $jlUrlTpl);
         ?>
             <tr style="background:<?php echo $bg; ?>">
                 <td><?php echo dateFr($r['date_demande']); ?></td>
-                <td><?php echo h($r['num_garantie']); ?></td>
+                <td><a href="<?php echo h($lienJl); ?>" target="_blank" rel="noopener" title="Ouvrir dans JLASSURE"><?php echo h($r['num_garantie']); ?> ↗</a></td>
+                <td><?php echo h($soc); ?></td>
                 <td><?php echo h(trim($r['cnom'] . ' ' . $r['cprenom'])); ?></td>
                 <td><?php echo h($r['cville']); ?></td>
                 <td><?php echo h($r['cmobile']); ?><?php echo ($r['cmail'] !== '' && $r['cmail'] !== null) ? '<br><span class="muted">' . h($r['cmail']) . '</span>' : ''; ?></td>
