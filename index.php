@@ -486,10 +486,11 @@ if ($vue === 'devis') {
     $totPrime = 0;
     foreach ($rows as $r) { $totPrime += num($r['prix_formule']); }
 
-    // URL JLASSURE (modifiable dans db.ini : jlassure_url = "...garantie_modif.php?id={id}")
+    // URL JLASSURE (modifiable dans db.ini : jlassure_url = "..."). {id} est remplacé
+    // par l'id de la garantie s'il est présent dans l'URL.
     $jlUrlTpl = (isset($cfg['jlassure_url']) && $cfg['jlassure_url'] !== '')
         ? $cfg['jlassure_url']
-        : 'https://www.jlassure.com/sousfiche/gestion/garantie_modif.php?id={id}';
+        : 'https://www.jlassure.com/sousfiche/gestion/index.php?view=GTEMRC';
 
     if ($EXPORT === 'csv') {
         $csv = array(array('Date', 'N devis', 'Societe', 'Client', 'Ville', 'Mobile', 'Mail', 'Immat', 'Vehicule', 'Produit', 'Prime', 'Anciennete (j)', 'Lien JLASSURE'));
