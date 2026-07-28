@@ -532,7 +532,7 @@ if ($vue === 'devis') {
         ?>
             <tr style="background:<?php echo $bg; ?>">
                 <td><?php echo dateFr($r['date_demande']); ?></td>
-                <td><a href="<?php echo h($lienJl); ?>" target="_blank" rel="noopener" title="Ouvrir dans JLASSURE"><?php echo h($r['num_garantie']); ?> ↗</a></td>
+                <td><a href="#" onclick="chercherJl(this.getAttribute('data-ng'));return false;" data-ng="<?php echo h($r['num_garantie']); ?>" title="Rechercher ce devis dans JLASSURE"><?php echo h($r['num_garantie']); ?> ↗</a></td>
                 <td><?php echo h($soc); ?></td>
                 <td><?php echo h(trim($r['cnom'] . ' ' . $r['cprenom'])); ?></td>
                 <td><?php echo h($r['cville']); ?></td>
@@ -547,6 +547,22 @@ if ($vue === 'devis') {
     </table>
     </div>
     <?php endif; ?>
+
+    <script>
+    // Ouvre JLASSURE (GTEMRC) et lance la recherche "Projet N°" = num_garantie (POST).
+    function chercherJl(ng) {
+        var f = document.createElement('form');
+        f.method = 'POST';
+        f.action = <?php echo json_encode(str_replace('{id}', '', $jlUrlTpl)); ?>;
+        f.target = '_blank';
+        function add(n, v) { var i = document.createElement('input'); i.type = 'hidden'; i.name = n; i.value = v; f.appendChild(i); }
+        add('numdemande', ng);
+        add('Envoyer', 'Rechercher');
+        document.body.appendChild(f);
+        f.submit();
+        document.body.removeChild(f);
+    }
+    </script>
 
     <p class="tools">Devis = garanties sans <code>num_contrat</code>. <a href="?t=jl_garantie">jl_garantie</a></p>
     </body></html>
