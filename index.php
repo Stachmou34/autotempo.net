@@ -230,7 +230,7 @@ if (isset($_GET['t']) && $_GET['t'] !== '') {
 
 // ── Apporteur(s) REYNARD + marque blanche ─────────────────────────
 $stmt = $pdo->prepare("SELECT id, nom, prenom, societe, commentaire, proprietaire FROM jl_app
-                       WHERE (nom LIKE :q OR prenom LIKE :q OR societe LIKE :q) AND status = 'V' ORDER BY nom");
+                       WHERE (nom LIKE :q OR prenom LIKE :q OR societe LIKE :q) AND status <> 'B' ORDER BY nom");
 $stmt->execute(array(':q' => '%' . $APPORTEUR . '%'));
 $apporteurs = $stmt->fetchAll();
 if (!$apporteurs) {

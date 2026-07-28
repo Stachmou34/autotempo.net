@@ -32,7 +32,7 @@ try {
 
 // ── Apporteur REYNARD (id, société, marque blanche) ───────────────
 $APPORTEUR = 'REYNARD';
-$stmt = $pdo->prepare("SELECT id, nom, prenom, societe, commentaire FROM jl_app WHERE (nom LIKE :q OR prenom LIKE :q OR societe LIKE :q) AND status = 'V'");
+$stmt = $pdo->prepare("SELECT id, nom, prenom, societe, commentaire FROM jl_app WHERE (nom LIKE :q OR prenom LIKE :q OR societe LIKE :q) AND status <> 'B'");
 $stmt->execute(array(':q' => '%' . $APPORTEUR . '%'));
 $ids = array(); $apInfo = array();
 foreach ($stmt->fetchAll() as $a) {
