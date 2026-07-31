@@ -468,8 +468,9 @@ if ($vue === 'devis') {
     } else {
         $in = implode(',', array_fill(0, count($idsUsed), '?'));
         $sql = "SELECT g.id, g.id_app, g.num_garantie, g.type_contrat, g.formule, g.date_demande, g.date_effet, g.prix_formule,
+                       g.prix_achat AS g_pa, g.marge AS g_marge, g.honoraire AS g_hono, g.id_lb2,
                        cl.nom AS cnom, cl.prenom AS cprenom, cl.ville AS cville, cl.mobile AS cmobile, cl.mail AS cmail,
-                       v.immatriculation AS immat, v.marque AS marque, v.modele AS modele
+                       v.immatriculation AS immat, v.marque AS marque, v.modele AS modele, v.categorie AS categorie
                 FROM jl_garantie g
                 LEFT JOIN jl_client cl ON cl.id = g.id_cli
                 LEFT JOIN jl_vehicule v ON v.id = g.id_vehi
@@ -483,8 +484,43 @@ if ($vue === 'devis') {
     }
 
     $aujourdhui = strtotime(date('Y-m-d'));
-    $totPrime = 0;
-    foreach ($rows as $r) { $totPrime += num($r['prix_formule']); }
+
+    /** Rétro estimée d'un devis (pas encore payé) : basée sur les montants de la garantie. */
+    $retroDevis = function ($r, $mb) {
+        $primeEsc = num($r['g_pa']);
+        $pv = $primeEsc + num($r['g_marge']) + num($r['g_hono']);
+        if ($mb == 1) {
+            $base = catCam($r['categorie']) ? ($pv - 1) : $pv;
+            $rcdr = round(($base - $primeEsc) * 0.4764, 2);
+            $hono = round(num($r['id_lb2']), 2);
+        } else {
+            $rcdr = round(num($r['id_lb2']), 2);
+            $hono = 0;
+        }
+        if ($rcdr <= 0) { $rcdr = 0; } if ($hono <= 0) { $hono = 0; }
+        return $rcdr + $hono;
+    };
+
+    // Croisement des plaques avec les contrats PAYÉS (état P) — même plaque déjà réglée ailleurs
+    $immats = array();
+    foreach ($rows as $r) { $im = trim((string) $r['immat']); if ($im !== '' && !in_array($im, $immats, true)) { $immats[] = $im; } }
+    $payeParPlaque = array();
+    if ($immats) {
+        $ph = implode(',', array_fill(0, count($immats), '?'));
+        $stP = $pdo->prepare("SELECT v.immatriculation AS immat, g.num_contrat AS nc, g.date_effet AS de
+                              FROM jl_garantie g
+                              JOIN jl_vehicule v ON v.id = g.id_vehi
+                              JOIN jl_reglement r ON r.id = g.id_reglement
+                              WHERE g.num_contrat <> '' AND r.etat = 'P' AND v.immatriculation IN ($ph)");
+        $stP->execute($immats);
+        foreach ($stP->fetchAll() as $p) { if ($p['immat'] !== '') { $payeParPlaque[$p['immat']] = $p; } }
+    }
+
+    $totRetro = 0;
+    foreach ($rows as $r) {
+        $mb = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['mb'] : 0;
+        $totRetro += $retroDevis($r, $mb);
+    }
 
     // URL JLASSURE (modifiable dans db.ini : jlassure_url = "..."). {id} est remplacé
     // par l'id de la garantie s'il est présent dans l'URL.
@@ -493,23 +529,26 @@ if ($vue === 'devis') {
         : 'https://www.jlassure.com/sousfiche/gestion/index.php?view=GTEMRC';
 
     if ($EXPORT === 'csv') {
-        $csv = array(array('Date', 'N devis', 'Societe', 'Client', 'Ville', 'Mobile', 'Mail', 'Immat', 'Vehicule', 'Produit', 'Prime', 'Anciennete (j)', 'Lien JLASSURE'));
+        $csv = array(array('Date', 'N devis', 'Societe', 'Client', 'Ville', 'Mobile', 'Mail', 'Immat', 'Vehicule', 'Produit', 'Retro estimee', 'Deja paye (contrat)', 'Anciennete (j)'));
         foreach ($rows as $r) {
             $age = floor(($aujourdhui - strtotime($r['date_demande'])) / 86400);
             $soc = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['societe'] : '';
+            $mb = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['mb'] : 0;
+            $paye = isset($payeParPlaque[$r['immat']]) ? $payeParPlaque[$r['immat']]['nc'] : '';
             $csv[] = array(dateFr($r['date_demande']), $r['num_garantie'], $soc, trim($r['cnom'] . ' ' . $r['cprenom']), $r['cville'],
                 $r['cmobile'], $r['cmail'], $r['immat'], trim($r['marque'] . ' ' . $r['modele']),
-                trim($r['type_contrat'] . ' ' . $r['formule']), num($r['prix_formule']), $age,
-                str_replace('{id}', (int) $r['id'], $jlUrlTpl));
+                trim($r['type_contrat'] . ' ' . $r['formule']), $retroDevis($r, $mb), $paye, $age);
         }
         csvOut('devis_' . $date_deb . '_' . $date_fin . '.csv', $csv);
     }
     ?>
     <p class="muted">Devis <?php echo h($LABEL); ?> (demandes sans n° de contrat) du
        <?php echo dateFr($date_deb); ?> au <?php echo dateFr($date_fin); ?>.</p>
+    <?php $nbPaye = 0; foreach ($rows as $r) { if ($r['immat'] !== '' && isset($payeParPlaque[$r['immat']])) { $nbPaye++; } } ?>
     <div class="stats">
         <div class="stat"><b><?php echo count($rows); ?></b><span>Devis en attente</span></div>
-        <div class="stat"><b><?php echo euros($totPrime); ?></b><span>Primes potentielles</span></div>
+        <div class="stat"><b><?php echo euros($totRetro); ?></b><span>Rétro estimée cumulée</span></div>
+        <div class="stat"><b style="color:#1a7d49"><?php echo $nbPaye; ?></b><span>Dont plaque déjà payée</span></div>
     </div>
     <p><a href="<?php echo h(lienCsv()); ?>" style="display:inline-block;background:#1a7d49;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none">⬇ Exporter en CSV</a></p>
 
@@ -520,15 +559,16 @@ if ($vue === 'devis') {
     <table>
         <thead><tr>
             <th>Date</th><th>N° devis</th><th>Société</th><th>Client</th><th>Ville</th><th>Contact</th>
-            <th>Véhicule</th><th>Produit</th><th class="num">Prime</th><th class="ctr">Ancienneté</th>
+            <th>Véhicule</th><th>Produit</th><th class="num">Rétro est.</th><th>Déjà payé ?</th><th class="ctr">Ancienneté</th>
         </tr></thead>
         <tbody>
         <?php foreach ($rows as $r):
             $veh = trim($r['marque'] . ' ' . $r['modele']);
             $age = floor(($aujourdhui - strtotime($r['date_demande'])) / 86400);
-            $bg = ($age > 7) ? '#fff2d9' : '#fff';
             $soc = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['societe'] : '';
-            $lienJl = str_replace('{id}', (int) $r['id'], $jlUrlTpl);
+            $mb = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['mb'] : 0;
+            $paye = ($r['immat'] !== '' && isset($payeParPlaque[$r['immat']])) ? $payeParPlaque[$r['immat']] : null;
+            $bg = $paye ? '#dcf5e8' : (($age > 7) ? '#fff2d9' : '#fff');
         ?>
             <tr style="background:<?php echo $bg; ?>">
                 <td><?php echo dateFr($r['date_demande']); ?></td>
@@ -539,7 +579,8 @@ if ($vue === 'devis') {
                 <td><?php echo h($r['cmobile']); ?><?php echo ($r['cmail'] !== '' && $r['cmail'] !== null) ? '<br><span class="muted">' . h($r['cmail']) . '</span>' : ''; ?></td>
                 <td><?php echo h($r['immat']); ?><?php echo $veh !== '' ? ' <span class="muted">' . h($veh) . '</span>' : ''; ?></td>
                 <td><?php echo h($r['type_contrat'] . ' ' . $r['formule']); ?></td>
-                <td class="num"><?php echo euros(num($r['prix_formule'])); ?></td>
+                <td class="num"><?php echo euros($retroDevis($r, $mb)); ?></td>
+                <td><?php if ($paye): ?><span style="background:#1a7d49;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;white-space:nowrap" title="Contrat payé pour cette plaque (effet <?php echo h(dateFr($paye['de'])); ?>)">💰 <?php echo h($paye['nc']); ?></span><?php else: ?><span class="muted">—</span><?php endif; ?></td>
                 <td class="ctr"><?php echo (int) $age; ?> j</td>
             </tr>
         <?php endforeach; ?>
