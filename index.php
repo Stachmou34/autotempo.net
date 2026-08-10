@@ -385,6 +385,15 @@ if ($vue === 'production') {
         $csv[] = array('Total', $totNbN, round($totRetroN, 2), $totNbP, round($totRetroP, 2));
         csvOut('production_' . $annee . '.csv', $csv);
     }
+
+    // KPI "potentiel du mois" : projection fin de mois au rythme actuel (année en cours).
+    $moisCourant = (int) date('n');
+    $estAnneeCourante = ($annee === (int) date('Y'));
+    $realiseMois = $estAnneeCourante ? $mN[$moisCourant] : 0;
+    $joursEcoules = (int) date('j');
+    $joursMois = (int) date('t');
+    $projMois = ($estAnneeCourante && $joursEcoules > 0) ? ($realiseMois / $joursEcoules * $joursMois) : 0;
+    $moisNom = $moisLbl[$moisCourant - 1];
     ?>
     <p class="muted">Production <?php echo h($LABEL); ?> — année <strong><?php echo $annee; ?></strong> (comparée à <?php echo $anneePrec; ?>), basée sur la date de souscription. Montants = total à rétrocéder (commissions RC DR + honoraires).</p>
     <div class="stats">
@@ -392,6 +401,9 @@ if ($vue === 'production') {
         <div class="stat hl"><b><?php echo euros($totRetroN); ?></b><span>À rétrocéder <?php echo $annee; ?></span></div>
         <div class="stat"><b><?php echo euros($totRetroP); ?></b><span>À rétrocéder <?php echo $anneePrec; ?></span></div>
         <div class="stat"><b style="color:<?php echo ($evol !== null && $evol < 0) ? '#c02b2b' : '#1a7d49'; ?>"><?php echo $evol === null ? '—' : ($evol > 0 ? '+' : '') . $evol . ' %'; ?></b><span>Évolution vs <?php echo $anneePrec; ?></span></div>
+        <?php if ($estAnneeCourante): ?>
+        <div class="stat" style="border-color:#d98a00"><b style="color:#d98a00"><?php echo euros($projMois); ?></b><span>Potentiel <?php echo $moisNom; ?> (projection) · réalisé <?php echo euros($realiseMois); ?> en <?php echo $joursEcoules; ?>/<?php echo $joursMois; ?> j</span></div>
+        <?php endif; ?>
     </div>
 
     <p><a href="<?php echo h(lienCsv()); ?>" style="display:inline-block;background:#1a7d49;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none">⬇ Exporter en CSV</a></p>
