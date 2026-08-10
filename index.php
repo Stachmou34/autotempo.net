@@ -504,17 +504,32 @@ if ($vue === 'devis') {
     // Croisement des plaques avec les contrats PAYÉS (état P) — même plaque déjà réglée ailleurs
     $immats = array();
     foreach ($rows as $r) { $im = trim((string) $r['immat']); if ($im !== '' && !in_array($im, $immats, true)) { $immats[] = $im; } }
-    $payeParPlaque = array();
+    $payeParPlaque = array(); // immat => liste des contrats payés [nc, dd (date_demande), de (date_effet)]
     if ($immats) {
         $ph = implode(',', array_fill(0, count($immats), '?'));
-        $stP = $pdo->prepare("SELECT v.immatriculation AS immat, g.num_contrat AS nc, g.date_effet AS de
+        $stP = $pdo->prepare("SELECT v.immatriculation AS immat, g.num_contrat AS nc, g.date_demande AS dd, g.date_effet AS de
                               FROM jl_garantie g
                               JOIN jl_vehicule v ON v.id = g.id_vehi
                               JOIN jl_reglement r ON r.id = g.id_reglement
                               WHERE g.num_contrat <> '' AND r.etat = 'P' AND v.immatriculation IN ($ph)");
         $stP->execute($immats);
-        foreach ($stP->fetchAll() as $p) { if ($p['immat'] !== '') { $payeParPlaque[$p['immat']] = $p; } }
+        foreach ($stP->fetchAll() as $p) { if ($p['immat'] !== '') { $payeParPlaque[$p['immat']][] = $p; } }
     }
+
+    // Un devis est "déjà payé" seulement s'il existe un contrat payé pour la même
+    // plaque ANTÉRIEUR au devis. On retourne le plus récent parmi ceux-là (ou null).
+    $plaquePayee = function ($r) use ($payeParPlaque) {
+        $im = $r['immat'];
+        if ($im === '' || !isset($payeParPlaque[$im])) { return null; }
+        $ts = strtotime($r['date_demande']);
+        $best = null;
+        foreach ($payeParPlaque[$im] as $c) {
+            if (strtotime($c['dd']) < $ts) {
+                if ($best === null || strtotime($c['dd']) > strtotime($best['dd'])) { $best = $c; }
+            }
+        }
+        return $best;
+    };
 
     $totRetro = 0;
     foreach ($rows as $r) {
@@ -534,7 +549,7 @@ if ($vue === 'devis') {
             $age = floor(($aujourdhui - strtotime($r['date_demande'])) / 86400);
             $soc = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['societe'] : '';
             $mb = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['mb'] : 0;
-            $paye = isset($payeParPlaque[$r['immat']]) ? $payeParPlaque[$r['immat']]['nc'] : '';
+            $pc = $plaquePayee($r); $paye = $pc ? $pc['nc'] : '';
             $csv[] = array(dateFr($r['date_demande']), $r['num_garantie'], $soc, trim($r['cnom'] . ' ' . $r['cprenom']), $r['cville'],
                 $r['cmobile'], $r['cmail'], $r['immat'], trim($r['marque'] . ' ' . $r['modele']),
                 trim($r['type_contrat'] . ' ' . $r['formule']), $retroDevis($r, $mb), $paye, $age);
@@ -544,7 +559,7 @@ if ($vue === 'devis') {
     ?>
     <p class="muted">Devis <?php echo h($LABEL); ?> (demandes sans n° de contrat) du
        <?php echo dateFr($date_deb); ?> au <?php echo dateFr($date_fin); ?>.</p>
-    <?php $nbPaye = 0; foreach ($rows as $r) { if ($r['immat'] !== '' && isset($payeParPlaque[$r['immat']])) { $nbPaye++; } } ?>
+    <?php $nbPaye = 0; foreach ($rows as $r) { if ($plaquePayee($r)) { $nbPaye++; } } ?>
     <div class="stats">
         <div class="stat"><b><?php echo count($rows); ?></b><span>Devis en attente</span></div>
         <div class="stat"><b><?php echo euros($totRetro); ?></b><span>Rétro estimée cumulée</span></div>
@@ -567,7 +582,7 @@ if ($vue === 'devis') {
             $age = floor(($aujourdhui - strtotime($r['date_demande'])) / 86400);
             $soc = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['societe'] : '';
             $mb = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['mb'] : 0;
-            $paye = ($r['immat'] !== '' && isset($payeParPlaque[$r['immat']])) ? $payeParPlaque[$r['immat']] : null;
+            $paye = $plaquePayee($r);
             $bg = $paye ? '#dcf5e8' : (($age > 7) ? '#fff2d9' : '#fff');
         ?>
             <tr style="background:<?php echo $bg; ?>">
