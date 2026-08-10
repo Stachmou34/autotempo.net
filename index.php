@@ -22,6 +22,15 @@ function h($s) { return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'); }
 function num($v) { return (float) str_replace(array(' ', ','), array('', '.'), (string) $v); }
 /** Catégories véhicule soumises à la règle "1 € camion" en marque blanche. */
 function catCam($c) { return in_array((string) $c, array('TCP', 'CAM3', 'CAM4', 'REM2', 'REM3', 'TRA'), true); }
+/** Décode la note JLASSURE (HTML : <br>, entités &laquo; &raquo; &hellip;…) en texte lisible. */
+function noteFmt($n) {
+    $n = (string) $n;
+    if ($n === '') { return ''; }
+    $n = preg_replace('#<br\s*/?>#i', "\n", $n);      // <br> -> sauts de ligne
+    $n = html_entity_decode($n, ENT_QUOTES, 'UTF-8'); // &laquo; -> «, &hellip; -> …
+    $n = strip_tags($n);                              // retire le HTML résiduel
+    return trim($n);
+}
 /** Sort un CSV (jette le HTML bufferisé) et arrête le script. $rows[0] = entêtes. */
 function csvOut($filename, $rows) {
     while (ob_get_level() > 0) { ob_end_clean(); }
@@ -468,7 +477,7 @@ if ($vue === 'devis') {
     } else {
         $in = implode(',', array_fill(0, count($idsUsed), '?'));
         $sql = "SELECT g.id, g.id_app, g.num_garantie, g.type_contrat, g.formule, g.date_demande, g.date_effet, g.prix_formule,
-                       g.prix_achat AS g_pa, g.marge AS g_marge, g.honoraire AS g_hono, g.id_lb2,
+                       g.prix_achat AS g_pa, g.marge AS g_marge, g.honoraire AS g_hono, g.id_lb2, g.note AS note,
                        cl.nom AS cnom, cl.prenom AS cprenom, cl.ville AS cville, cl.mobile AS cmobile, cl.mail AS cmail,
                        v.immatriculation AS immat, v.marque AS marque, v.modele AS modele, v.categorie AS categorie
                 FROM jl_garantie g
@@ -544,7 +553,7 @@ if ($vue === 'devis') {
         : 'https://www.jlassure.com/sousfiche/gestion/index.php?view=GTEMRC';
 
     if ($EXPORT === 'csv') {
-        $csv = array(array('Date', 'N devis', 'Societe', 'Client', 'Ville', 'Mobile', 'Mail', 'Immat', 'Vehicule', 'Produit', 'Retro estimee', 'Deja paye (contrat)', 'Anciennete (j)'));
+        $csv = array(array('Date', 'N devis', 'Societe', 'Client', 'Ville', 'Mobile', 'Mail', 'Immat', 'Vehicule', 'Produit', 'Retro estimee', 'Deja paye (contrat)', 'Anciennete (j)', 'Note'));
         foreach ($rows as $r) {
             $age = floor(($aujourdhui - strtotime($r['date_demande'])) / 86400);
             $soc = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['societe'] : '';
@@ -552,7 +561,7 @@ if ($vue === 'devis') {
             $pc = $plaquePayee($r); $paye = $pc ? $pc['nc'] : '';
             $csv[] = array(dateFr($r['date_demande']), $r['num_garantie'], $soc, trim($r['cnom'] . ' ' . $r['cprenom']), $r['cville'],
                 $r['cmobile'], $r['cmail'], $r['immat'], trim($r['marque'] . ' ' . $r['modele']),
-                trim($r['type_contrat'] . ' ' . $r['formule']), $retroDevis($r, $mb), $paye, $age);
+                trim($r['type_contrat'] . ' ' . $r['formule']), $retroDevis($r, $mb), $paye, $age, noteFmt($r['note']));
         }
         csvOut('devis_' . $date_deb . '_' . $date_fin . '.csv', $csv);
     }
@@ -574,7 +583,7 @@ if ($vue === 'devis') {
     <table>
         <thead><tr>
             <th>Date</th><th>N° devis</th><th>Société</th><th>Client</th><th>Ville</th><th>Contact</th>
-            <th>Véhicule</th><th>Produit</th><th class="num">Rétro est.</th><th>Déjà payé ?</th><th class="ctr">Ancienneté</th>
+            <th>Véhicule</th><th>Produit</th><th class="num">Rétro est.</th><th>Déjà payé ?</th><th class="ctr">Ancienneté</th><th>Note</th>
         </tr></thead>
         <tbody>
         <?php foreach ($rows as $r):
@@ -597,6 +606,7 @@ if ($vue === 'devis') {
                 <td class="num"><?php echo euros($retroDevis($r, $mb)); ?></td>
                 <td><?php if ($paye): ?><span style="background:#1a7d49;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;white-space:nowrap" title="Contrat payé pour cette plaque (effet <?php echo h(dateFr($paye['de'])); ?>)">💰 <?php echo h($paye['nc']); ?></span><?php else: ?><span class="muted">—</span><?php endif; ?></td>
                 <td class="ctr"><?php echo (int) $age; ?> j</td>
+                <td style="white-space:normal;max-width:280px;font-size:12px"><?php echo nl2br(h(noteFmt($r['note']))); ?></td>
             </tr>
         <?php endforeach; ?>
         </tbody>
