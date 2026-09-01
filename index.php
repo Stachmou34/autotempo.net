@@ -262,6 +262,7 @@ echo '<p class="muted">Sociétés : <strong>' . h(implode(' · ', $societes)) . 
 $vue = isset($_GET['vue']) ? $_GET['vue'] : 'bordereau';
 if (!in_array($vue, array('bordereau', 'production', 'devis', 'renouvellements'), true)) { $vue = 'bordereau'; }
 $annee = (isset($_GET['annee']) && preg_match('/^\d{4}$/', $_GET['annee'])) ? (int) $_GET['annee'] : (int) date('Y');
+$moisSel = (isset($_GET['mois']) && preg_match('/^(1[0-2]|[1-9])$/', $_GET['mois'])) ? (int) $_GET['mois'] : (int) date('n');
 
 // Filtres : etat, tri, periode, societe
 $etatLabels = array('P' => 'Payé', 'C' => 'En cours', 'N' => 'Non réglé', 'R' => 'Remboursé', 'A' => 'Annulé');
@@ -299,6 +300,13 @@ $labelPeriode = ($vue === 'renouvellements') ? 'Échéance entre' : 'Période';
         <select name="annee">
             <?php for ($y = (int) date('Y'); $y >= 2020; $y--): ?>
                 <option value="<?php echo $y; ?>"<?php echo $annee === $y ? ' selected' : ''; ?>><?php echo $y; ?></option>
+            <?php endfor; ?>
+        </select>
+        &nbsp; Mois (graphique/jour) :
+        <select name="mois">
+            <?php $moisNoms = array('Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre');
+            for ($m = 1; $m <= 12; $m++): ?>
+                <option value="<?php echo $m; ?>"<?php echo $moisSel === $m ? ' selected' : ''; ?>><?php echo $moisNoms[$m - 1]; ?></option>
             <?php endfor; ?>
         </select>
     <?php else: ?>
@@ -395,20 +403,22 @@ if ($vue === 'production') {
     $projMois = ($estAnneeCourante && $joursEcoules > 0) ? ($realiseMois / $joursEcoules * $joursMois) : 0;
     $moisNom = $moisLbl[$moisCourant - 1];
 
-    // Contrats par jour du mois en cours (pour le graphique)
+    // Contrats par jour du mois SÉLECTIONNÉ (pour le graphique)
+    $moisSelNom = $moisLbl[$moisSel - 1];
+    $joursMoisSel = (int) date('t', mktime(0, 0, 0, $moisSel, 1, $annee));
     $joursLbl = array(); $nbJour = array();
-    if ($estAnneeCourante && $idsUsed) {
+    if ($idsUsed) {
         $parJour = array();
-        for ($d = 1; $d <= $joursMois; $d++) { $parJour[$d] = 0; }
+        for ($d = 1; $d <= $joursMoisSel; $d++) { $parJour[$d] = 0; }
         $inD = implode(',', array_fill(0, count($idsUsed), '?'));
         $sqlD = "SELECT DAY(date_demande) AS d, COUNT(*) AS nb FROM jl_garantie
                  WHERE id_app IN ($inD) AND num_contrat <> '' AND YEAR(date_demande) = ? AND MONTH(date_demande) = ?
                  GROUP BY d";
         $stD = $pdo->prepare($sqlD);
-        $pD = $idsUsed; $pD[] = $annee; $pD[] = $moisCourant;
+        $pD = $idsUsed; $pD[] = $annee; $pD[] = $moisSel;
         $stD->execute($pD);
-        foreach ($stD->fetchAll() as $rowD) { $d = (int) $rowD['d']; if ($d >= 1 && $d <= $joursMois) { $parJour[$d] = (int) $rowD['nb']; } }
-        for ($d = 1; $d <= $joursMois; $d++) { $joursLbl[] = $d; $nbJour[] = $parJour[$d]; }
+        foreach ($stD->fetchAll() as $rowD) { $d = (int) $rowD['d']; if ($d >= 1 && $d <= $joursMoisSel) { $parJour[$d] = (int) $rowD['nb']; } }
+        for ($d = 1; $d <= $joursMoisSel; $d++) { $joursLbl[] = $d; $nbJour[] = $parJour[$d]; }
     }
     ?>
     <p class="muted">Production <?php echo h($LABEL); ?> — année <strong><?php echo $annee; ?></strong> (comparée à <?php echo $anneePrec; ?>), basée sur la date de souscription. Montants = total à rétrocéder (commissions RC DR + honoraires).</p>
@@ -435,12 +445,10 @@ if ($vue === 'production') {
         </div>
     </div>
 
-    <?php if ($estAnneeCourante): ?>
     <div style="background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px;margin-top:20px">
-        <strong>Contrats par jour — <?php echo $moisNom . ' ' . $annee; ?></strong>
+        <strong>Contrats par jour — <?php echo $moisSelNom . ' ' . $annee; ?></strong>
         <div style="height:280px;margin-top:8px"><canvas id="dayChart"></canvas></div>
     </div>
-    <?php endif; ?>
 
     <div style="overflow:auto;margin-top:20px">
     <table>
