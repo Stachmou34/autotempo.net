@@ -394,6 +394,22 @@ if ($vue === 'production') {
     $joursMois = (int) date('t');
     $projMois = ($estAnneeCourante && $joursEcoules > 0) ? ($realiseMois / $joursEcoules * $joursMois) : 0;
     $moisNom = $moisLbl[$moisCourant - 1];
+
+    // Contrats par jour du mois en cours (pour le graphique)
+    $joursLbl = array(); $nbJour = array();
+    if ($estAnneeCourante && $idsUsed) {
+        $parJour = array();
+        for ($d = 1; $d <= $joursMois; $d++) { $parJour[$d] = 0; }
+        $inD = implode(',', array_fill(0, count($idsUsed), '?'));
+        $sqlD = "SELECT DAY(date_demande) AS d, COUNT(*) AS nb FROM jl_garantie
+                 WHERE id_app IN ($inD) AND num_contrat <> '' AND YEAR(date_demande) = ? AND MONTH(date_demande) = ?
+                 GROUP BY d";
+        $stD = $pdo->prepare($sqlD);
+        $pD = $idsUsed; $pD[] = $annee; $pD[] = $moisCourant;
+        $stD->execute($pD);
+        foreach ($stD->fetchAll() as $rowD) { $d = (int) $rowD['d']; if ($d >= 1 && $d <= $joursMois) { $parJour[$d] = (int) $rowD['nb']; } }
+        for ($d = 1; $d <= $joursMois; $d++) { $joursLbl[] = $d; $nbJour[] = $parJour[$d]; }
+    }
     ?>
     <p class="muted">Production <?php echo h($LABEL); ?> — année <strong><?php echo $annee; ?></strong> (comparée à <?php echo $anneePrec; ?>), basée sur la date de souscription. Montants = total à rétrocéder (commissions RC DR + honoraires).</p>
     <div class="stats">
@@ -418,6 +434,13 @@ if ($vue === 'production') {
             <div style="height:300px;margin-top:8px"><canvas id="nbChart"></canvas></div>
         </div>
     </div>
+
+    <?php if ($estAnneeCourante): ?>
+    <div style="background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px;margin-top:20px">
+        <strong>Contrats par jour — <?php echo $moisNom . ' ' . $annee; ?></strong>
+        <div style="height:280px;margin-top:8px"><canvas id="dayChart"></canvas></div>
+    </div>
+    <?php endif; ?>
 
     <div style="overflow:auto;margin-top:20px">
     <table>
@@ -473,6 +496,17 @@ if ($vue === 'production') {
             ]},
             options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
         });
+        var elDay = document.getElementById('dayChart');
+        if (elDay) {
+            new Chart(elDay, {
+                type: 'bar',
+                data: { labels: <?php echo json_encode($joursLbl); ?>, datasets: [
+                    { label: 'Contrats', data: <?php echo json_encode($nbJour); ?>, backgroundColor: blue }
+                ]},
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+                    scales: { x: { title: { display: true, text: 'Jour du mois' } }, y: { beginAtZero: true, ticks: { precision: 0 } } } }
+            });
+        }
     })();
     </script>
     </body></html>
