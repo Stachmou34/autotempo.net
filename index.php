@@ -312,6 +312,8 @@ $labelPeriode = ($vue === 'renouvellements') ? 'Échéance entre' : 'Période';
     <?php else: ?>
         <?php echo $labelPeriode; ?> : <input type="date" name="date_deb" value="<?php echo h($date_deb); ?>">
         → <input type="date" name="date_fin" value="<?php echo h($date_fin); ?>">
+        <?php $today = date('Y-m-d'); $qAuj = $_GET; unset($qAuj['export']); $qAuj['date_deb'] = $today; $qAuj['date_fin'] = $today; ?>
+        <a href="?<?php echo h(http_build_query($qAuj)); ?>" style="margin-left:6px;background:#1f5eff;color:#fff;padding:7px 12px;border-radius:6px;text-decoration:none;font-size:13px">📅 Aujourd'hui</a>
     <?php endif; ?>
     &nbsp; Société :
     <select name="soc">
