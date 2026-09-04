@@ -319,12 +319,21 @@ $labelPeriode = ($vue === 'renouvellements') ? 'Échéance entre' : 'Période';
         $hier = date('Y-m-d', strtotime('-1 day'));
         $lundi = date('Y-m-d', strtotime('monday this week'));
         $moisDeb = date('Y-m-01'); $moisFin = date('Y-m-t');
-        $styleBtnJour = 'margin-left:6px;padding:6px 11px;border-radius:6px;text-decoration:none;font-size:13px;border:1px solid #ccd4e2;color:#1f5eff;background:#fff';
+        // Quel raccourci correspond à la période courante ?
+        $actif = '';
+        if ($date_deb === $today && $date_fin === $today) { $actif = 'auj'; }
+        elseif ($date_deb === $hier && $date_fin === $hier) { $actif = 'hier'; }
+        elseif ($date_deb === $lundi && $date_fin === $today) { $actif = 'sem'; }
+        elseif ($date_deb === $moisDeb && $date_fin === $moisFin) { $actif = 'mois'; }
+        $styleBtnJour = function ($on) {
+            $b = 'margin-left:6px;padding:6px 11px;border-radius:6px;text-decoration:none;font-size:13px;border:1px solid #ccd4e2;';
+            return $b . ($on ? 'color:#fff;background:#1f5eff;border-color:#1f5eff' : 'color:#1f5eff;background:#fff');
+        };
         ?>
-        <a href="<?php echo h($mkRange($today, $today)); ?>" style="<?php echo str_replace(array('color:#1f5eff', 'background:#fff'), array('color:#fff', 'background:#1f5eff'), $styleBtnJour); ?>">📅 Aujourd'hui</a>
-        <a href="<?php echo h($mkRange($hier, $hier)); ?>" style="<?php echo $styleBtnJour; ?>">Hier</a>
-        <a href="<?php echo h($mkRange($lundi, $today)); ?>" style="<?php echo $styleBtnJour; ?>">Cette semaine</a>
-        <a href="<?php echo h($mkRange($moisDeb, $moisFin)); ?>" style="<?php echo $styleBtnJour; ?>">Ce mois-ci</a>
+        <a href="<?php echo h($mkRange($today, $today)); ?>" style="<?php echo $styleBtnJour($actif === 'auj'); ?>">📅 Aujourd'hui</a>
+        <a href="<?php echo h($mkRange($hier, $hier)); ?>" style="<?php echo $styleBtnJour($actif === 'hier'); ?>">Hier</a>
+        <a href="<?php echo h($mkRange($lundi, $today)); ?>" style="<?php echo $styleBtnJour($actif === 'sem'); ?>">Cette semaine</a>
+        <a href="<?php echo h($mkRange($moisDeb, $moisFin)); ?>" style="<?php echo $styleBtnJour($actif === 'mois'); ?>">Ce mois-ci</a>
     <?php endif; ?>
     &nbsp; Société :
     <select name="soc">
