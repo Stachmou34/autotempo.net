@@ -312,8 +312,19 @@ $labelPeriode = ($vue === 'renouvellements') ? 'Échéance entre' : 'Période';
     <?php else: ?>
         <?php echo $labelPeriode; ?> : <input type="date" name="date_deb" value="<?php echo h($date_deb); ?>">
         → <input type="date" name="date_fin" value="<?php echo h($date_fin); ?>">
-        <?php $today = date('Y-m-d'); $qAuj = $_GET; unset($qAuj['export']); $qAuj['date_deb'] = $today; $qAuj['date_fin'] = $today; ?>
-        <a href="?<?php echo h(http_build_query($qAuj)); ?>" style="margin-left:6px;background:#1f5eff;color:#fff;padding:7px 12px;border-radius:6px;text-decoration:none;font-size:13px">📅 Aujourd'hui</a>
+        <?php
+        $baseQ = $_GET; unset($baseQ['export']);
+        $mkRange = function ($deb, $fin) use ($baseQ) { $q = $baseQ; $q['date_deb'] = $deb; $q['date_fin'] = $fin; return '?' . http_build_query($q); };
+        $today = date('Y-m-d');
+        $hier = date('Y-m-d', strtotime('-1 day'));
+        $lundi = date('Y-m-d', strtotime('monday this week'));
+        $moisDeb = date('Y-m-01'); $moisFin = date('Y-m-t');
+        $styleBtnJour = 'margin-left:6px;padding:6px 11px;border-radius:6px;text-decoration:none;font-size:13px;border:1px solid #ccd4e2;color:#1f5eff;background:#fff';
+        ?>
+        <a href="<?php echo h($mkRange($today, $today)); ?>" style="<?php echo str_replace(array('color:#1f5eff', 'background:#fff'), array('color:#fff', 'background:#1f5eff'), $styleBtnJour); ?>">📅 Aujourd'hui</a>
+        <a href="<?php echo h($mkRange($hier, $hier)); ?>" style="<?php echo $styleBtnJour; ?>">Hier</a>
+        <a href="<?php echo h($mkRange($lundi, $today)); ?>" style="<?php echo $styleBtnJour; ?>">Cette semaine</a>
+        <a href="<?php echo h($mkRange($moisDeb, $moisFin)); ?>" style="<?php echo $styleBtnJour; ?>">Ce mois-ci</a>
     <?php endif; ?>
     &nbsp; Société :
     <select name="soc">
