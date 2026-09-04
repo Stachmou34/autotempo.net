@@ -705,7 +705,7 @@ if ($vue === 'devis') {
         : 'https://www.jlassure.com/sousfiche/gestion/index.php?view=GTEMRC';
 
     if ($EXPORT === 'csv') {
-        $csv = array(array('Date', 'N devis', 'Societe', 'Client', 'Ville', 'Mobile', 'Mail', 'Immat', 'Vehicule', 'Produit', 'Retro estimee', 'Deja paye (contrat)', 'Anciennete (j)', 'Note'));
+        $csv = array(array('Date', 'N devis', 'Societe', 'Client', 'Ville', 'Mobile', 'Mail', 'Immat', 'Vehicule', 'Retro estimee', 'Deja paye (contrat)', 'Anciennete (j)', 'Note'));
         foreach ($rows as $r) {
             $age = floor(($aujourdhui - strtotime($r['date_demande'])) / 86400);
             $soc = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['societe'] : '';
@@ -713,7 +713,7 @@ if ($vue === 'devis') {
             $pc = $plaquePayee($r); $paye = $pc ? $pc['nc'] : '';
             $csv[] = array(dateFr($r['date_demande']), $r['num_garantie'], $soc, trim($r['cnom'] . ' ' . $r['cprenom']), $r['cville'],
                 $r['cmobile'], $r['cmail'], $r['immat'], trim($r['marque'] . ' ' . $r['modele']),
-                trim($r['type_contrat'] . ' ' . $r['formule']), $retroDevis($r, $mb), $paye, $age, noteFmt($r['note']));
+                $retroDevis($r, $mb), $paye, $age, noteFmt($r['note']));
         }
         csvOut('devis_' . $date_deb . '_' . $date_fin . '.csv', $csv);
     }
@@ -735,7 +735,7 @@ if ($vue === 'devis') {
     <table>
         <thead><tr>
             <th>Date</th><th>N° devis</th><th>Société</th><th>Client</th><th>Ville</th><th>Contact</th>
-            <th>Véhicule</th><th>Produit</th><th class="num">Rétro est.</th><th>Déjà payé ?</th><th class="ctr">Ancienneté</th><th>Note</th>
+            <th>Véhicule</th><th class="num">Rétro est.</th><th>Déjà payé ?</th><th class="ctr">Ancienneté</th><th>Note</th>
         </tr></thead>
         <tbody>
         <?php foreach ($rows as $r):
@@ -754,7 +754,6 @@ if ($vue === 'devis') {
                 <td><?php echo h($r['cville']); ?></td>
                 <td><?php echo h($r['cmobile']); ?><?php echo ($r['cmail'] !== '' && $r['cmail'] !== null) ? '<br><span class="muted">' . h($r['cmail']) . '</span>' : ''; ?></td>
                 <td><?php echo h($r['immat']); ?><?php echo $veh !== '' ? ' <span class="muted">' . h($veh) . '</span>' : ''; ?></td>
-                <td><?php echo h($r['type_contrat'] . ' ' . $r['formule']); ?></td>
                 <td class="num"><?php echo euros($retroDevis($r, $mb)); ?></td>
                 <td><?php if ($paye): ?><span style="background:#1a7d49;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;white-space:nowrap" title="Contrat payé pour cette plaque (effet <?php echo h(dateFr($paye['de'])); ?>)">💰 <?php echo h($paye['nc']); ?></span><?php else: ?><span class="muted">—</span><?php endif; ?></td>
                 <td class="ctr"><?php echo (int) $age; ?> j</td>
@@ -983,7 +982,7 @@ if ($vue === 'renouvellements') {
                         <?php echo $c['adresse'] !== '' ? '<br>🏠 ' . h($c['adresse']) : ''; ?>
                     </div>
                     <table style="margin-top:4px">
-                        <thead><tr><th>Date</th><th>N° contrat</th><th>Véhicule</th><th>Produit</th><th class="num">Prime</th></tr></thead>
+                        <thead><tr><th>Date</th><th>N° contrat</th><th>Véhicule</th><th class="num">Prime</th></tr></thead>
                         <tbody>
                         <?php foreach ($c['contrats'] as $ct):
                             $veh = trim($ct['marque'] . ' ' . $ct['modele']); ?>
@@ -991,7 +990,6 @@ if ($vue === 'renouvellements') {
                                 <td><?php echo dateFr($ct['date_demande']); ?></td>
                                 <td><?php echo h($ct['num_contrat']); ?></td>
                                 <td><?php echo h($ct['immatriculation']); ?><?php echo $veh !== '' ? ' <span class="muted">' . h($veh) . '</span>' : ''; ?></td>
-                                <td><?php echo h($ct['type_contrat'] . ' ' . $ct['formule']); ?></td>
                                 <td class="num"><?php echo euros(num($ct['prix_formule'])); ?></td>
                             </tr>
                         <?php endforeach; ?>
