@@ -486,11 +486,10 @@ if ($vue === 'production') {
     foreach ($moisComp as $mc) {
         $key = $mc['y'] . '-' . $mc['m'];
         $dim = (int) date('t', mktime(0, 0, 0, $mc['m'], 1, $mc['y']));
-        $estCourant = ($mc['y'] === $todayY && $mc['m'] === $todayM);
-        $maxDay = $estCourant ? min($dim, $todayD) : $dim;
+        // On coupe TOUTES les courbes au jour de référence : comparaison "au même jour" lisible (échelle non écrasée par les mois complets).
         $cum = 0; $arr = array();
-        for ($d = 1; $d <= 31; $d++) {
-            if ($d <= $maxDay) { $cum += isset($retroJour[$key][$d]) ? $retroJour[$key][$d] : 0; $arr[] = round($cum, 2); }
+        for ($d = 1; $d <= $refDay; $d++) {
+            if ($d <= $dim) { $cum += isset($retroJour[$key][$d]) ? $retroJour[$key][$d] : 0; $arr[] = round($cum, 2); }
             else { $arr[] = null; }
         }
         $lbl = $moisLbl[$mc['m'] - 1] . ' ' . $mc['y'];
@@ -616,7 +615,7 @@ if ($vue === 'production') {
         }
         var elComp = document.getElementById('compChart');
         if (elComp) {
-            var jours31 = []; for (var j = 1; j <= 31; j++) { jours31.push(j); }
+            var joursRef = []; for (var j = 1; j <= <?php echo (int) $refDay; ?>; j++) { joursRef.push(j); }
             var palette = ['#e05a5a', '#d98a00', '#1a9c5b', '#8a3bc0', '#0aa2c0', '#6f93da', '#b06f00', '#9db4e0', '#c95d9e', '#6c757d', '#2b8a3e', '#e8590c'];
             var eur = function (v) { return v.toLocaleString('fr-FR', { minimumFractionDigits: 2 }) + ' €'; };
             var ds = <?php echo json_encode($compDatasets); ?>.map(function (m, i) {
@@ -626,7 +625,7 @@ if ($vue === 'production') {
             });
             new Chart(elComp, {
                 type: 'line',
-                data: { labels: jours31, datasets: ds },
+                data: { labels: joursRef, datasets: ds },
                 options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
                     plugins: { tooltip: { callbacks: { label: function (c) { return c.dataset.label + ' : ' + eur(c.parsed.y); } } } },
                     scales: { x: { title: { display: true, text: 'Jour du mois' } }, y: { beginAtZero: true, ticks: { callback: function (v) { return v.toLocaleString('fr-FR') + ' €'; } }, title: { display: true, text: 'Rétro cumulée' } } } }
