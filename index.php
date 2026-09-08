@@ -263,7 +263,6 @@ $vue = isset($_GET['vue']) ? $_GET['vue'] : 'bordereau';
 if (!in_array($vue, array('bordereau', 'production', 'devis', 'renouvellements'), true)) { $vue = 'bordereau'; }
 $annee = (isset($_GET['annee']) && preg_match('/^\d{4}$/', $_GET['annee'])) ? (int) $_GET['annee'] : (int) date('Y');
 $moisSel = (isset($_GET['mois']) && preg_match('/^(1[0-2]|[1-9])$/', $_GET['mois'])) ? (int) $_GET['mois'] : (int) date('n');
-$cmp = isset($_GET['cmp']) ? $_GET['cmp'] : 'prec3'; // comparaison progression : prec3 | tous | 1..12
 
 // Filtres : etat, tri, periode, societe
 $etatLabels = array('P' => 'Payé', 'C' => 'En cours', 'N' => 'Non réglé', 'R' => 'Remboursé', 'A' => 'Annulé');
@@ -308,14 +307,6 @@ $labelPeriode = ($vue === 'renouvellements') ? 'Échéance entre' : 'Période';
             <?php $moisNoms = array('Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre');
             for ($m = 1; $m <= 12; $m++): ?>
                 <option value="<?php echo $m; ?>"<?php echo $moisSel === $m ? ' selected' : ''; ?>><?php echo $moisNoms[$m - 1]; ?></option>
-            <?php endfor; ?>
-        </select>
-        &nbsp; Comparer (progression) :
-        <select name="cmp">
-            <option value="prec3"<?php echo $cmp === 'prec3' ? ' selected' : ''; ?>>3 mois précédents</option>
-            <option value="tous"<?php echo $cmp === 'tous' ? ' selected' : ''; ?>>Tous les mois de l'année</option>
-            <?php for ($m = 1; $m <= 12; $m++): ?>
-                <option value="<?php echo $m; ?>"<?php echo (string) $cmp === (string) $m ? ' selected' : ''; ?>>vs <?php echo $moisNoms[$m - 1]; ?></option>
             <?php endfor; ?>
         </select>
     <?php else: ?>
@@ -452,34 +443,41 @@ if ($vue === 'production') {
         for ($d = 1; $d <= $joursMoisSel; $d++) { $joursLbl[] = $d; $nbJour[] = $parJour[$d]; }
     }
 
-    // Comparaison "même jour" EN PRIME : mois à tracer selon $cmp
-    $selMonth = array('y' => $annee, 'm' => $moisSel);
+    // Comparaison "même jour" EN RÉTRO : mois sélectionné + 3 mois précédents
     $moisComp = array();
-    if ($cmp === 'tous') {
-        for ($m = 1; $m <= 12; $m++) { $moisComp[] = array('y' => $annee, 'm' => $m); }
-    } elseif (ctype_digit((string) $cmp) && (int) $cmp >= 1 && (int) $cmp <= 12) {
-        $cmpM = (int) $cmp;
-        if ($cmpM < $moisSel) { $moisComp[] = array('y' => $annee, 'm' => $cmpM); $moisComp[] = $selMonth; }
-        else { $moisComp[] = $selMonth; if ($cmpM !== $moisSel) { $moisComp[] = array('y' => $annee, 'm' => $cmpM); } }
-    } else {
-        $yy = $annee; $mm = $moisSel; $tmp = array();
-        for ($k = 0; $k < 4; $k++) { $tmp[] = array('y' => $yy, 'm' => $mm); $mm--; if ($mm < 1) { $mm = 12; $yy--; } }
-        $moisComp = array_reverse($tmp);
-    }
+    $yy = $annee; $mm = $moisSel;
+    for ($k = 0; $k < 4; $k++) { $moisComp[] = array('y' => $yy, 'm' => $mm); $mm--; if ($mm < 1) { $mm = 12; $yy--; } }
+    $moisComp = array_reverse($moisComp);
 
-    $primeJour = array();
-    if ($idsUsed && $moisComp) {
+    // Rétro cumulée par jour (même calcul que le bordereau, via règlement)
+    $retroJour = array();
+    if ($idsUsed) {
         $rangeStart = sprintf('%04d-%02d-01', $moisComp[0]['y'], $moisComp[0]['m']);
-        $last = $moisComp[count($moisComp) - 1];
-        $rangeEnd = date('Y-m-t', mktime(0, 0, 0, $last['m'], 1, $last['y']));
+        $rangeEnd = date('Y-m-t', mktime(0, 0, 0, $moisSel, 1, $annee));
         $inC = implode(',', array_fill(0, count($idsUsed), '?'));
-        $sqlC = "SELECT YEAR(date_demande) AS y, MONTH(date_demande) AS m, DAY(date_demande) AS d, SUM(prix_formule) AS s
-                 FROM jl_garantie WHERE id_app IN ($inC) AND num_contrat <> '' AND date_demande BETWEEN ? AND ?
-                 GROUP BY y, m, d";
+        $sqlC = "SELECT g.id_app, g.date_demande, g.prix_assitance, g.prix_pj, g.id_lb2,
+                        r.note3, r.pa, r.marge AS r_marge, r.honoraire AS r_hono, r.etat, v.categorie AS categorie
+                 FROM jl_garantie g
+                 JOIN jl_reglement r ON r.id_garantie = g.id
+                 LEFT JOIN jl_vehicule v ON v.id = g.id_vehi
+                 WHERE g.id_app IN ($inC) AND g.num_contrat <> '' AND g.date_demande BETWEEN ? AND ?";
         $stC = $pdo->prepare($sqlC);
         $pC = $idsUsed; $pC[] = $rangeStart; $pC[] = $rangeEnd;
         $stC->execute($pC);
-        foreach ($stC->fetchAll() as $rc) { $primeJour[$rc['y'] . '-' . $rc['m']][(int) $rc['d']] = (float) $rc['s']; }
+        foreach ($stC->fetchAll() as $rc) {
+            $ts = strtotime($rc['date_demande']); if (!$ts) { continue; }
+            $key = date('Y', $ts) . '-' . (int) date('n', $ts); $d = (int) date('j', $ts);
+            $mb = isset($apMap[(int) $rc['id_app']]) ? $apMap[(int) $rc['id_app']]['mb'] : 0;
+            $etat = $rc['etat'];
+            $montant = num($rc['note3']); if ($etat === 'A' || $etat === 'R') { $montant = 0; }
+            $prime_esc = num($rc['pa']); $pv = $prime_esc + num($rc['r_marge']) + num($rc['r_hono']);
+            $prix_ass = num($rc['prix_assitance']); $prix_dr = num($rc['prix_pj']);
+            if ($mb == 1) { $base = catCam($rc['categorie']) ? ($pv - 1) : $pv; $rcdr = round(($base - $prime_esc) * 0.4764, 2); $hono = round(num($rc['id_lb2']), 2); }
+            else          { $rcdr = round($montant - $pv - $prix_ass - $prix_dr, 2); $hono = 0; }
+            if ($rcdr <= 0) { $rcdr = 0; } if ($hono <= 0) { $hono = 0; }
+            if (!isset($retroJour[$key][$d])) { $retroJour[$key][$d] = 0; }
+            $retroJour[$key][$d] += $rcdr + $hono;
+        }
     }
     $todayY = (int) date('Y'); $todayM = (int) date('n'); $todayD = (int) date('j');
     $selDim = (int) date('t', mktime(0, 0, 0, $moisSel, 1, $annee));
@@ -492,7 +490,7 @@ if ($vue === 'production') {
         $maxDay = $estCourant ? min($dim, $todayD) : $dim;
         $cum = 0; $arr = array();
         for ($d = 1; $d <= 31; $d++) {
-            if ($d <= $maxDay) { $cum += isset($primeJour[$key][$d]) ? $primeJour[$key][$d] : 0; $arr[] = round($cum, 2); }
+            if ($d <= $maxDay) { $cum += isset($retroJour[$key][$d]) ? $retroJour[$key][$d] : 0; $arr[] = round($cum, 2); }
             else { $arr[] = null; }
         }
         $lbl = $moisLbl[$mc['m'] - 1] . ' ' . $mc['y'];
@@ -502,12 +500,10 @@ if ($vue === 'production') {
         $refByKey[$key] = ($arr[$dd - 1] === null) ? 0 : $arr[$dd - 1];
         $compRef[] = array('label' => $lbl, 'val' => $refByKey[$key]);
     }
-    // Résumé : mois sélectionné vs base (mois précédent / mois choisi)
+    // Résumé : mois sélectionné vs mois précédent, au même jour
     $refSel = isset($refByKey[$annee . '-' . $moisSel]) ? $refByKey[$annee . '-' . $moisSel] : 0;
-    if ($cmp === 'tous') { $baseKey = null; }
-    elseif (ctype_digit((string) $cmp)) { $baseKey = $annee . '-' . (int) $cmp; }
-    else { $bm = $moisSel - 1; $by = $annee; if ($bm < 1) { $bm = 12; $by--; } $baseKey = $by . '-' . $bm; }
-    $refBase = ($baseKey !== null && isset($refByKey[$baseKey])) ? $refByKey[$baseKey] : null;
+    $bm = $moisSel - 1; $by = $annee; if ($bm < 1) { $bm = 12; $by--; }
+    $refBase = isset($refByKey[$by . '-' . $bm]) ? $refByKey[$by . '-' . $bm] : null;
     $refEvol = ($refBase !== null && $refBase > 0) ? round(($refSel - $refBase) / $refBase * 100, 1) : null;
     ?>
     <p class="muted">Production <?php echo h($LABEL); ?> — année <strong><?php echo $annee; ?></strong> (comparée à <?php echo $anneePrec; ?>), basée sur la date de souscription. Montants = total à rétrocéder (commissions RC DR + honoraires).</p>
@@ -540,7 +536,7 @@ if ($vue === 'production') {
     </div>
 
     <div style="background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px;margin-top:20px">
-        <strong>Progression cumulée (prime) — comparaison au même jour</strong>
+        <strong>Progression cumulée (rétro) — comparaison au même jour</strong>
         <p class="muted" style="margin:4px 0 0">
             Au <strong>jour <?php echo $refDay; ?></strong> :
             <?php foreach ($compRef as $cr): ?>
@@ -633,7 +629,7 @@ if ($vue === 'production') {
                 data: { labels: jours31, datasets: ds },
                 options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
                     plugins: { tooltip: { callbacks: { label: function (c) { return c.dataset.label + ' : ' + eur(c.parsed.y); } } } },
-                    scales: { x: { title: { display: true, text: 'Jour du mois' } }, y: { beginAtZero: true, ticks: { callback: function (v) { return v.toLocaleString('fr-FR') + ' €'; } }, title: { display: true, text: 'Prime cumulée' } } } }
+                    scales: { x: { title: { display: true, text: 'Jour du mois' } }, y: { beginAtZero: true, ticks: { callback: function (v) { return v.toLocaleString('fr-FR') + ' €'; } }, title: { display: true, text: 'Rétro cumulée' } } } }
             });
         }
     })();
