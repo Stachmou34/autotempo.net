@@ -22,6 +22,18 @@ function h($s) { return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'); }
 function num($v) { return (float) str_replace(array(' ', ','), array('', '.'), (string) $v); }
 /** Catégories véhicule soumises à la règle "1 € camion" en marque blanche. */
 function catCam($c) { return in_array((string) $c, array('TCP', 'CAM3', 'CAM4', 'REM2', 'REM3', 'TRA'), true); }
+/** Tri concurrence (période) : nb de contrats desc puis CA desc. */
+function concTriPer($x, $y) {
+    if ($x['nb'] !== $y['nb']) { return $y['nb'] - $x['nb']; }
+    if ($x['ca'] == $y['ca']) { return 0; }
+    return ($y['ca'] < $x['ca']) ? -1 : 1;
+}
+/** Tri concurrence (année) : nb de contrats annuels desc puis CA annuel desc. */
+function concTriAn($x, $y) {
+    if ($x['nb_an'] !== $y['nb_an']) { return $y['nb_an'] - $x['nb_an']; }
+    if ($x['ca_an'] == $y['ca_an']) { return 0; }
+    return ($y['ca_an'] < $x['ca_an']) ? -1 : 1;
+}
 /** Décode la note JLASSURE (HTML : <br>, entités &laquo; &raquo; &hellip;…) en texte lisible. */
 function noteFmt($n) {
     $n = (string) $n;
@@ -260,7 +272,7 @@ echo '<p class="muted">Sociétés : <strong>' . h(implode(' · ', $societes)) . 
 
 // Vue courante (BI)
 $vue = isset($_GET['vue']) ? $_GET['vue'] : 'bordereau';
-if (!in_array($vue, array('bordereau', 'production', 'devis', 'renouvellements'), true)) { $vue = 'bordereau'; }
+if (!in_array($vue, array('bordereau', 'production', 'concurrence', 'devis', 'renouvellements'), true)) { $vue = 'bordereau'; }
 $annee = (isset($_GET['annee']) && preg_match('/^\d{4}$/', $_GET['annee'])) ? (int) $_GET['annee'] : (int) date('Y');
 $moisSel = (isset($_GET['mois']) && preg_match('/^(1[0-2]|[1-9])$/', $_GET['mois'])) ? (int) $_GET['mois'] : (int) date('n');
 
@@ -286,6 +298,7 @@ if ($soc_filtre !== 'TOUTES') {
 echo '<div class="nav">'
    . '<a href="?vue=bordereau"' . ($vue === 'bordereau' ? ' class="on"' : '') . '>Bordereau rétrocession</a>'
    . '<a href="?vue=production"' . ($vue === 'production' ? ' class="on"' : '') . '>Production</a>'
+   . '<a href="?vue=concurrence"' . ($vue === 'concurrence' ? ' class="on"' : '') . '>Concurrence</a>'
    . '<a href="?vue=devis"' . ($vue === 'devis' ? ' class="on"' : '') . '>Devis</a>'
    . '<a href="?vue=renouvellements"' . ($vue === 'renouvellements' ? ' class="on"' : '') . '>Renouvellements</a>'
    . '</div>';
@@ -295,13 +308,14 @@ $labelPeriode = ($vue === 'renouvellements') ? 'Échéance entre' : 'Période';
 ?>
 <form class="filtres" method="get">
     <input type="hidden" name="vue" value="<?php echo h($vue); ?>">
-    <?php if ($vue === 'production'): ?>
+    <?php if ($vue === 'production' || $vue === 'concurrence'): ?>
         Année :
         <select name="annee">
             <?php for ($y = (int) date('Y'); $y >= 2020; $y--): ?>
                 <option value="<?php echo $y; ?>"<?php echo $annee === $y ? ' selected' : ''; ?>><?php echo $y; ?></option>
             <?php endfor; ?>
         </select>
+        <?php if ($vue === 'production'): ?>
         &nbsp; Mois (graphique/jour) :
         <select name="mois">
             <?php $moisNoms = array('Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre');
@@ -309,7 +323,9 @@ $labelPeriode = ($vue === 'renouvellements') ? 'Échéance entre' : 'Période';
                 <option value="<?php echo $m; ?>"<?php echo $moisSel === $m ? ' selected' : ''; ?>><?php echo $moisNoms[$m - 1]; ?></option>
             <?php endfor; ?>
         </select>
-    <?php else: ?>
+        <?php endif; ?>
+    <?php endif; ?>
+    <?php if ($vue !== 'production'): ?>
         <?php echo $labelPeriode; ?> : <input type="date" name="date_deb" value="<?php echo h($date_deb); ?>">
         → <input type="date" name="date_fin" value="<?php echo h($date_fin); ?>">
         <?php
@@ -335,6 +351,7 @@ $labelPeriode = ($vue === 'renouvellements') ? 'Échéance entre' : 'Période';
         <a href="<?php echo h($mkRange($lundi, $today)); ?>" style="<?php echo $styleBtnJour($actif === 'sem'); ?>">Cette semaine</a>
         <a href="<?php echo h($mkRange($moisDeb, $moisFin)); ?>" style="<?php echo $styleBtnJour($actif === 'mois'); ?>">Ce mois-ci</a>
     <?php endif; ?>
+    <?php if ($vue !== 'concurrence'): ?>
     &nbsp; Société :
     <select name="soc">
         <option value="TOUTES"<?php echo $soc_filtre === 'TOUTES' ? ' selected' : ''; ?>>Toutes</option>
@@ -342,6 +359,7 @@ $labelPeriode = ($vue === 'renouvellements') ? 'Échéance entre' : 'Période';
             <option value="<?php echo h($s); ?>"<?php echo $soc_filtre === $s ? ' selected' : ''; ?>><?php echo h($s); ?></option>
         <?php endforeach; ?>
     </select>
+    <?php endif; ?>
     <?php if ($vue === 'bordereau'): ?>
     <br>
     État :
@@ -633,6 +651,264 @@ if ($vue === 'production') {
         }
     })();
     </script>
+    </body></html>
+    <?php
+    exit;
+}
+
+// =================================================================
+//  VUE CONCURRENCE (positionnement de notre marque blanche
+//  face aux autres apporteurs du groupe GP — jl_app.lettrage = 'GP')
+// =================================================================
+if ($vue === 'concurrence') {
+    $moisLbl = array('Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc');
+    $debAn = sprintf('%04d-01-01', $annee);
+    $finAn = sprintf('%04d-01-01', $annee + 1);
+
+    // Contrats "V" (validés) de tous les apporteurs GP sur l'année — 1 ligne = 1 contrat (pas de jointure règlement pour ne pas dédoubler).
+    $sqlG = "SELECT g.id_app, a.societe, a.nom, a.prenom,
+                    MONTH(g.date_demande) AS m, DATE(g.date_demande) AS jour,
+                    g.type_contrat, g.prix_formule
+             FROM jl_garantie g
+             INNER JOIN jl_app a ON a.id = g.id_app
+             WHERE a.lettrage = 'GP' AND g.status = 'V' AND g.num_contrat <> ''
+               AND g.date_demande >= ? AND g.date_demande < ?";
+    $stG = $pdo->prepare($sqlG);
+    $stG->execute(array($debAn, $finAn));
+    $rowsG = $stG->fetchAll();
+
+    // Agrégation par apporteur.
+    $nousSet = array(); foreach ($ids as $iid) { $nousSet[(int) $iid] = 1; }
+    $app = array();
+    foreach ($rowsG as $r) {
+        $aid = (int) $r['id_app'];
+        if (!isset($app[$aid])) {
+            $soc = ($r['societe'] !== '' && $r['societe'] !== null) ? $r['societe'] : trim($r['nom'] . ' ' . $r['prenom']);
+            if ($soc === '') { $soc = 'Apporteur #' . $aid; }
+            $app[$aid] = array('societe' => $soc, 'nb_an' => 0, 'ca_an' => 0.0,
+                               'nbMois' => array_fill(1, 12, 0), 'nb_per' => 0, 'ca_per' => 0.0,
+                               'mix' => array(), 'nous' => isset($nousSet[$aid]));
+        }
+        $m = (int) $r['m']; $ca = num($r['prix_formule']);
+        $app[$aid]['nb_an']++; $app[$aid]['ca_an'] += $ca;
+        if ($m >= 1 && $m <= 12) { $app[$aid]['nbMois'][$m]++; }
+        $j = substr((string) $r['jour'], 0, 10);
+        if ($j >= $date_deb && $j <= $date_fin) { $app[$aid]['nb_per']++; $app[$aid]['ca_per'] += $ca; }
+        $tc = trim((string) $r['type_contrat']); if ($tc === '') { $tc = '(n.c.)'; }
+        if (!isset($app[$aid]['mix'][$tc])) { $app[$aid]['mix'][$tc] = 0; }
+        $app[$aid]['mix'][$tc]++;
+    }
+
+    // Totaux GP + agrégat "nous".
+    $nbApp = count($app);
+    $totNbAn = 0; $totCaAn = 0; $totNbPer = 0; $totCaPer = 0;
+    $gpMix = array();
+    $nousNbPer = 0; $nousCaPer = 0; $nousNbAn = 0; $nousCaAn = 0; $nousMix = array(); $nbNousApp = 0;
+    foreach ($app as $a) {
+        $totNbAn += $a['nb_an']; $totCaAn += $a['ca_an']; $totNbPer += $a['nb_per']; $totCaPer += $a['ca_per'];
+        foreach ($a['mix'] as $t => $n) { if (!isset($gpMix[$t])) { $gpMix[$t] = 0; } $gpMix[$t] += $n; }
+        if ($a['nous']) {
+            $nbNousApp++;
+            $nousNbPer += $a['nb_per']; $nousCaPer += $a['ca_per']; $nousNbAn += $a['nb_an']; $nousCaAn += $a['ca_an'];
+            foreach ($a['mix'] as $t => $n) { if (!isset($nousMix[$t])) { $nousMix[$t] = 0; } $nousMix[$t] += $n; }
+        }
+    }
+
+    // Classement par période (nb de contrats desc, puis CA desc).
+    $listPer = array();
+    foreach ($app as $aid => $a) {
+        $listPer[] = array('id' => $aid, 'societe' => $a['societe'], 'nb' => $a['nb_per'], 'ca' => $a['ca_per'],
+                           'nb_an' => $a['nb_an'], 'ca_an' => $a['ca_an'], 'nous' => $a['nous'],
+                           'panier' => ($a['nb_per'] > 0 ? $a['ca_per'] / $a['nb_per'] : 0));
+    }
+    usort($listPer, 'concTriPer');
+    // Rang (période) : notre meilleur rang.
+    $rangNous = null;
+    foreach ($listPer as $i => $row) { if ($row['nous'] && ($rangNous === null || ($i + 1) < $rangNous)) { $rangNous = $i + 1; } }
+
+    // Classement annuel (pour le rang annuel).
+    $listAn = $listPer; usort($listAn, 'concTriAn');
+    $rangNousAn = null;
+    foreach ($listAn as $i => $row) { if ($row['nous'] && ($rangNousAn === null || ($i + 1) < $rangNousAn)) { $rangNousAn = $i + 1; } }
+
+    $partPer = ($totNbPer > 0) ? round($nousNbPer / $totNbPer * 100, 1) : 0;
+    $partAn = ($totNbAn > 0) ? round($nousNbAn / $totNbAn * 100, 1) : 0;
+    $panierNous = ($nousNbPer > 0) ? $nousCaPer / $nousNbPer : 0;
+    $panierGP = ($totNbPer > 0) ? $totCaPer / $totNbPer : 0;
+
+    // Export CSV du classement (période).
+    if ($EXPORT === 'csv') {
+        $csv = array(array('Rang', 'Societe', 'Contrats periode', 'Part %', 'CA periode', 'Panier moyen', 'Contrats annee', 'CA annee', 'Nous'));
+        foreach ($listPer as $i => $row) {
+            $part = ($totNbPer > 0) ? round($row['nb'] / $totNbPer * 100, 1) : 0;
+            $csv[] = array($i + 1, $row['societe'], $row['nb'], $part, round($row['ca'], 2),
+                           round($row['panier'], 2), $row['nb_an'], round($row['ca_an'], 2), $row['nous'] ? 'OUI' : '');
+        }
+        csvOut('concurrence_gp_' . $annee . '.csv', $csv);
+    }
+
+    // ── Données graphiques ────────────────────────────────────────
+    // 1) Part de marché (période) : top 10 par contrats + nos apporteurs.
+    $topPer = array_slice($listPer, 0, 10);
+    $inTop = array(); foreach ($topPer as $t) { $inTop[$t['id']] = 1; }
+    foreach ($listPer as $row) { if ($row['nous'] && !isset($inTop[$row['id']])) { $topPer[] = $row; $inTop[$row['id']] = 1; } }
+    $barLbl = array(); $barVal = array(); $barCol = array();
+    foreach ($topPer as $row) {
+        $barLbl[] = $row['societe'];
+        $barVal[] = $row['nb'];
+        $barCol[] = $row['nous'] ? '#1f5eff' : '#9db4e0';
+    }
+
+    // 2) Progression cumulée par mois (année) : top 5 par contrats annuels + nous.
+    $listAnTop = $listAn;
+    $sel5 = array(); $seen = array();
+    foreach ($listAnTop as $row) { if (count($sel5) >= 5) { break; } $sel5[] = $row['id']; $seen[$row['id']] = 1; }
+    foreach ($listAnTop as $row) { if ($row['nous'] && !isset($seen[$row['id']])) { $sel5[] = $row['id']; $seen[$row['id']] = 1; } }
+    $maxMois = ($annee === (int) date('Y')) ? (int) date('n') : 12;
+    $paletteC = array('#e05a5a', '#d98a00', '#1a9c5b', '#8a3bc0', '#0aa2c0', '#b06f00', '#c95d9e', '#6c757d');
+    $lineDatasets = array(); $ci = 0;
+    foreach ($sel5 as $aid) {
+        if (!isset($app[$aid])) { continue; }
+        $a = $app[$aid]; $cum = 0; $data = array();
+        for ($m = 1; $m <= $maxMois; $m++) { $cum += $a['nbMois'][$m]; $data[] = $cum; }
+        $estNous = $a['nous'];
+        $lineDatasets[] = array('label' => $a['societe'], 'data' => $data, 'nous' => $estNous,
+                                'col' => $estNous ? '#1f5eff' : $paletteC[$ci % count($paletteC)]);
+        if (!$estNous) { $ci++; }
+    }
+    $lineLbl = array(); for ($m = 1; $m <= $maxMois; $m++) { $lineLbl[] = $moisLbl[$m - 1]; }
+
+    // 3) Panier moyen (période) : top 10 volume, ordonné, nous en évidence.
+    $panLbl = array(); $panVal = array(); $panCol = array();
+    foreach ($topPer as $row) {
+        $panLbl[] = $row['societe'];
+        $panVal[] = round($row['panier'], 2);
+        $panCol[] = $row['nous'] ? '#1f5eff' : '#9db4e0';
+    }
+
+    // 4) Mix produit (année) : notre répartition vs moyenne GP, sur les principaux types.
+    arsort($gpMix);
+    $typesTop = array_slice(array_keys($gpMix), 0, 6);
+    $mixLbl = array(); $mixNous = array(); $mixGP = array();
+    foreach ($typesTop as $t) {
+        $mixLbl[] = $t;
+        $mixNous[] = ($nousNbAn > 0) ? round((isset($nousMix[$t]) ? $nousMix[$t] : 0) / $nousNbAn * 100, 1) : 0;
+        $mixGP[] = ($totNbAn > 0) ? round($gpMix[$t] / $totNbAn * 100, 1) : 0;
+    }
+
+    // ── Rendu ─────────────────────────────────────────────────────
+    ?>
+    <p class="muted">Comparaison de notre marque blanche (<strong><?php echo h($LABEL); ?></strong>) aux autres apporteurs du groupe <strong>GP</strong> (jl_app.lettrage = 'GP'), sur les contrats validés (status « V »). Année <strong><?php echo $annee; ?></strong> pour les graphiques ; classement sur la période <strong><?php echo dateFr($date_deb); ?> → <?php echo dateFr($date_fin); ?></strong>.</p>
+
+    <?php if ($nbApp === 0): ?>
+        <div class="box"><p class="no">Aucun contrat GP trouvé pour <?php echo $annee; ?>.</p>
+        <p class="muted">Vérifie que des apporteurs ont bien <code>lettrage = 'GP'</code> et des contrats <code>status = 'V'</code> sur l'année sélectionnée.</p></div>
+    <?php else: ?>
+
+    <div class="stats">
+        <div class="stat hl"><b>#<?php echo $rangNous !== null ? $rangNous : '—'; ?><span style="font-size:14px;color:#666"> / <?php echo $nbApp; ?></span></b><span>Notre rang (période)<?php echo $nbNousApp > 1 ? ' · ' . $nbNousApp . ' comptes' : ''; ?></span></div>
+        <div class="stat"><b><?php echo $nousNbPer; ?></b><span>Nos contrats (période) · <?php echo $partPer; ?> % du GP</span></div>
+        <div class="stat"><b><?php echo $totNbPer; ?></b><span>Total contrats GP (période) · <?php echo $nbApp; ?> apporteurs</span></div>
+        <div class="stat"><b style="color:<?php echo $panierNous >= $panierGP ? '#1a7d49' : '#c02b2b'; ?>"><?php echo euros($panierNous); ?></b><span>Notre panier moyen · moy. GP <?php echo euros($panierGP); ?></span></div>
+        <div class="stat"><b>#<?php echo $rangNousAn !== null ? $rangNousAn : '—'; ?></b><span>Rang annuel · <?php echo $partAn; ?> % du GP (<?php echo $nousNbAn; ?>/<?php echo $totNbAn; ?>)</span></div>
+    </div>
+
+    <p><a href="<?php echo h(lienCsv()); ?>" style="display:inline-block;background:#1a7d49;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none">⬇ Exporter le classement (CSV)</a></p>
+
+    <div style="display:flex;flex-wrap:wrap;gap:20px;margin-top:16px">
+        <div style="flex:1 1 460px;min-width:320px;background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px">
+            <strong>Contrats par apporteur — période (nous en bleu)</strong>
+            <div style="height:320px;margin-top:8px"><canvas id="cMarket"></canvas></div>
+        </div>
+        <div style="flex:1 1 460px;min-width:320px;background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px">
+            <strong>Progression cumulée des contrats — <?php echo $annee; ?></strong>
+            <div style="height:320px;margin-top:8px"><canvas id="cLine"></canvas></div>
+        </div>
+        <div style="flex:1 1 460px;min-width:320px;background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px">
+            <strong>Panier moyen (prix formule) — période</strong>
+            <div style="height:320px;margin-top:8px"><canvas id="cPanier"></canvas></div>
+        </div>
+        <div style="flex:1 1 460px;min-width:320px;background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px">
+            <strong>Mix produit — nous vs moyenne GP (<?php echo $annee; ?>)</strong>
+            <div style="height:320px;margin-top:8px"><canvas id="cMix"></canvas></div>
+        </div>
+    </div>
+
+    <h2>Classement des apporteurs GP — période</h2>
+    <div style="overflow:auto">
+    <table>
+        <thead><tr>
+            <th>#</th><th>Apporteur</th>
+            <th class="num">Contrats (période)</th><th class="num">Part %</th>
+            <th class="num">CA période</th><th class="num">Panier moyen</th>
+            <th class="num">Contrats <?php echo $annee; ?></th><th class="num">CA <?php echo $annee; ?></th>
+        </tr></thead>
+        <tbody>
+        <?php foreach ($listPer as $i => $row): $part = ($totNbPer > 0) ? round($row['nb'] / $totNbPer * 100, 1) : 0; ?>
+            <tr<?php echo $row['nous'] ? ' style="background:#eef3ff;font-weight:600"' : ''; ?>>
+                <td class="ctr"><?php echo $i + 1; ?></td>
+                <td><?php echo h($row['societe']); ?><?php echo $row['nous'] ? ' <span style="color:#1f5eff">◆ nous</span>' : ''; ?></td>
+                <td class="num"><?php echo $row['nb']; ?></td>
+                <td class="num"><?php echo $part; ?> %</td>
+                <td class="num"><?php echo euros($row['ca']); ?></td>
+                <td class="num"><?php echo euros($row['panier']); ?></td>
+                <td class="num"><?php echo $row['nb_an']; ?></td>
+                <td class="num"><?php echo euros($row['ca_an']); ?></td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script>
+    (function () {
+        var eur = function (v) { return v.toLocaleString('fr-FR', { minimumFractionDigits: 2 }) + ' €'; };
+        var horiz = { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } };
+
+        var elM = document.getElementById('cMarket');
+        if (elM) {
+            new Chart(elM, { type: 'bar',
+                data: { labels: <?php echo json_encode($barLbl); ?>, datasets: [{ data: <?php echo json_encode($barVal); ?>, backgroundColor: <?php echo json_encode($barCol); ?> }] },
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { var t = <?php echo (int) $totNbPer; ?>; var p = t ? (c.parsed.x / t * 100).toFixed(1) : 0; return c.parsed.x + ' contrats (' + p + ' %)'; } } } },
+                    scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } } });
+        }
+
+        var elL = document.getElementById('cLine');
+        if (elL) {
+            var lds = <?php echo json_encode($lineDatasets); ?>.map(function (m) {
+                return { label: m.label, data: m.data, borderColor: m.col, backgroundColor: m.col,
+                         borderWidth: m.nous ? 3 : 1.5, tension: 0.2, pointRadius: 0 };
+            });
+            new Chart(elL, { type: 'line',
+                data: { labels: <?php echo json_encode($lineLbl); ?>, datasets: lds },
+                options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+                    scales: { y: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'Contrats cumulés' } } } } });
+        }
+
+        var elP = document.getElementById('cPanier');
+        if (elP) {
+            new Chart(elP, { type: 'bar',
+                data: { labels: <?php echo json_encode($panLbl); ?>, datasets: [{ data: <?php echo json_encode($panVal); ?>, backgroundColor: <?php echo json_encode($panCol); ?> }] },
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { return eur(c.parsed.x); } } } },
+                    scales: { x: { beginAtZero: true, ticks: { callback: function (v) { return v.toLocaleString('fr-FR') + ' €'; } } } } } });
+        }
+
+        var elX = document.getElementById('cMix');
+        if (elX) {
+            new Chart(elX, { type: 'bar',
+                data: { labels: <?php echo json_encode($mixLbl); ?>, datasets: [
+                    { label: 'MCJ COURTAGE', data: <?php echo json_encode($mixNous); ?>, backgroundColor: '#1f5eff' },
+                    { label: 'Moyenne GP', data: <?php echo json_encode($mixGP); ?>, backgroundColor: '#9db4e0' } ] },
+                options: { responsive: true, maintainAspectRatio: false,
+                    plugins: { tooltip: { callbacks: { label: function (c) { return c.dataset.label + ' : ' + c.parsed.y + ' %'; } } } },
+                    scales: { y: { beginAtZero: true, ticks: { callback: function (v) { return v + ' %'; } }, title: { display: true, text: '% des contrats' } } } } });
+        }
+    })();
+    </script>
+    <?php endif; ?>
     </body></html>
     <?php
     exit;
