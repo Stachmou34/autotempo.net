@@ -811,17 +811,9 @@ if ($vue === 'concurrence') {
         $panCol[] = $row['nous'] ? '#1f5eff' : '#9db4e0';
     }
 
-    // 5) Taux de transformation devis → contrat (période) : nous vs GP + par apporteur.
+    // 5) Taux de transformation devis → contrat (période) : nous vs moyenne GP (KPI).
     $txNous = ($nousNbPer + $nousDevPer > 0) ? round($nousNbPer / ($nousNbPer + $nousDevPer) * 100, 1) : 0;
     $txGP   = ($totNbPer + $totDevPer > 0) ? round($totNbPer / ($totNbPer + $totDevPer) * 100, 1) : 0;
-    $txLbl = array(); $txVal = array(); $txCol = array();
-    foreach ($topPer as $row) {
-        $a = isset($app[$row['id']]) ? $app[$row['id']] : null;
-        $den = $row['nb'] + ($a ? $a['dev_per'] : 0);
-        $txLbl[] = $row['societe'];
-        $txVal[] = ($den > 0) ? round($row['nb'] / $den * 100, 1) : 0;
-        $txCol[] = $row['nous'] ? '#1f5eff' : '#9db4e0';
-    }
 
     // 6) Mix catégorie de véhicule (année) : notre répartition vs moyenne GP.
     arsort($gpCat);
@@ -865,10 +857,6 @@ if ($vue === 'concurrence') {
         <div style="flex:1 1 460px;min-width:320px;background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px">
             <strong>Panier moyen (prix formule) — période</strong>
             <div style="height:320px;margin-top:8px"><canvas id="cPanier"></canvas></div>
-        </div>
-        <div style="flex:1 1 460px;min-width:320px;background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px">
-            <strong>Taux de transformation devis→contrat — période (nous en bleu)</strong>
-            <div style="height:320px;margin-top:8px"><canvas id="cTx"></canvas></div>
         </div>
         <div style="flex:1 1 460px;min-width:320px;background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px">
             <strong>Mix catégorie véhicule — nous vs moyenne GP (<?php echo $annee; ?>)</strong>
@@ -936,15 +924,6 @@ if ($vue === 'concurrence') {
                 options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
                     plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { return eur(c.parsed.x); } } } },
                     scales: { x: { beginAtZero: true, ticks: { callback: function (v) { return v.toLocaleString('fr-FR') + ' €'; } } } } } });
-        }
-
-        var elT = document.getElementById('cTx');
-        if (elT) {
-            new Chart(elT, { type: 'bar',
-                data: { labels: <?php echo json_encode($txLbl); ?>, datasets: [{ data: <?php echo json_encode($txVal); ?>, backgroundColor: <?php echo json_encode($txCol); ?> }] },
-                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { return c.parsed.x + ' % transformés'; } } } },
-                    scales: { x: { beginAtZero: true, max: 100, ticks: { callback: function (v) { return v + ' %'; } } } } } });
         }
 
         var elC = document.getElementById('cCat');
