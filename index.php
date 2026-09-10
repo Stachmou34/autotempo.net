@@ -811,16 +811,6 @@ if ($vue === 'concurrence') {
         $panCol[] = $row['nous'] ? '#1f5eff' : '#9db4e0';
     }
 
-    // 4) Mix produit (année) : notre répartition vs moyenne GP, sur les principaux types.
-    arsort($gpMix);
-    $typesTop = array_slice(array_keys($gpMix), 0, 6);
-    $mixLbl = array(); $mixNous = array(); $mixGP = array();
-    foreach ($typesTop as $t) {
-        $mixLbl[] = $t;
-        $mixNous[] = ($nousNbAn > 0) ? round((isset($nousMix[$t]) ? $nousMix[$t] : 0) / $nousNbAn * 100, 1) : 0;
-        $mixGP[] = ($totNbAn > 0) ? round($gpMix[$t] / $totNbAn * 100, 1) : 0;
-    }
-
     // 5) Taux de transformation devis → contrat (période) : nous vs GP + par apporteur.
     $txNous = ($nousNbPer + $nousDevPer > 0) ? round($nousNbPer / ($nousNbPer + $nousDevPer) * 100, 1) : 0;
     $txGP   = ($totNbPer + $totDevPer > 0) ? round($totNbPer / ($totNbPer + $totDevPer) * 100, 1) : 0;
@@ -875,10 +865,6 @@ if ($vue === 'concurrence') {
         <div style="flex:1 1 460px;min-width:320px;background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px">
             <strong>Panier moyen (prix formule) — période</strong>
             <div style="height:320px;margin-top:8px"><canvas id="cPanier"></canvas></div>
-        </div>
-        <div style="flex:1 1 460px;min-width:320px;background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px">
-            <strong>Mix produit — nous vs moyenne GP (<?php echo $annee; ?>)</strong>
-            <div style="height:320px;margin-top:8px"><canvas id="cMix"></canvas></div>
         </div>
         <div style="flex:1 1 460px;min-width:320px;background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px">
             <strong>Taux de transformation devis→contrat — période (nous en bleu)</strong>
@@ -950,17 +936,6 @@ if ($vue === 'concurrence') {
                 options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
                     plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { return eur(c.parsed.x); } } } },
                     scales: { x: { beginAtZero: true, ticks: { callback: function (v) { return v.toLocaleString('fr-FR') + ' €'; } } } } } });
-        }
-
-        var elX = document.getElementById('cMix');
-        if (elX) {
-            new Chart(elX, { type: 'bar',
-                data: { labels: <?php echo json_encode($mixLbl); ?>, datasets: [
-                    { label: 'MCJ COURTAGE', data: <?php echo json_encode($mixNous); ?>, backgroundColor: '#1f5eff' },
-                    { label: 'Moyenne GP', data: <?php echo json_encode($mixGP); ?>, backgroundColor: '#9db4e0' } ] },
-                options: { responsive: true, maintainAspectRatio: false,
-                    plugins: { tooltip: { callbacks: { label: function (c) { return c.dataset.label + ' : ' + c.parsed.y + ' %'; } } } },
-                    scales: { y: { beginAtZero: true, ticks: { callback: function (v) { return v + ' %'; } }, title: { display: true, text: '% des contrats' } } } } });
         }
 
         var elT = document.getElementById('cTx');
