@@ -665,13 +665,16 @@ if ($vue === 'concurrence') {
     $debAn = sprintf('%04d-01-01', $annee);
     $finAn = sprintf('%04d-01-01', $annee + 1);
 
-    // Contrats "V" (validés) de tous les apporteurs GP sur l'année — 1 ligne = 1 contrat (pas de jointure règlement pour ne pas dédoubler).
+    // Toutes les demandes GP de l'année (devis + contrats), 1 ligne = 1 demande.
+    // On classe ensuite en PHP : contrat validé (status 'V' + num_contrat) vs devis (sans num_contrat).
     $sqlG = "SELECT g.id_app, a.societe, a.nom, a.prenom,
                     MONTH(g.date_demande) AS m, DATE(g.date_demande) AS jour,
-                    g.type_contrat, g.prix_formule
+                    g.type_contrat, g.prix_formule, g.num_contrat, g.status,
+                    v.categorie AS categorie
              FROM jl_garantie g
              INNER JOIN jl_app a ON a.id = g.id_app
-             WHERE a.lettrage = 'GP' AND g.status = 'V' AND g.num_contrat <> ''
+             LEFT JOIN jl_vehicule v ON v.id = g.id_vehi
+             WHERE a.lettrage = 'GP'
                AND g.date_demande >= ? AND g.date_demande < ?";
     $stG = $pdo->prepare($sqlG);
     $stG->execute(array($debAn, $finAn));
@@ -687,30 +690,52 @@ if ($vue === 'concurrence') {
             if ($soc === '') { $soc = 'Apporteur #' . $aid; }
             $app[$aid] = array('societe' => $soc, 'nb_an' => 0, 'ca_an' => 0.0,
                                'nbMois' => array_fill(1, 12, 0), 'nb_per' => 0, 'ca_per' => 0.0,
-                               'mix' => array(), 'nous' => isset($nousSet[$aid]));
+                               'mix' => array(), 'cat' => array(),
+                               'dev_per' => 0, 'dev_an' => 0, 'nous' => isset($nousSet[$aid]));
         }
-        $m = (int) $r['m']; $ca = num($r['prix_formule']);
-        $app[$aid]['nb_an']++; $app[$aid]['ca_an'] += $ca;
-        if ($m >= 1 && $m <= 12) { $app[$aid]['nbMois'][$m]++; }
+        $m = (int) $r['m'];
         $j = substr((string) $r['jour'], 0, 10);
-        if ($j >= $date_deb && $j <= $date_fin) { $app[$aid]['nb_per']++; $app[$aid]['ca_per'] += $ca; }
-        $tc = trim((string) $r['type_contrat']); if ($tc === '') { $tc = '(n.c.)'; }
-        if (!isset($app[$aid]['mix'][$tc])) { $app[$aid]['mix'][$tc] = 0; }
-        $app[$aid]['mix'][$tc]++;
+        $dansPer = ($j >= $date_deb && $j <= $date_fin);
+        $estContrat = (trim((string) $r['num_contrat']) !== '' && $r['status'] === 'V');
+        $estDevis = (trim((string) $r['num_contrat']) === '');
+        if ($estContrat) {
+            $ca = num($r['prix_formule']);
+            $app[$aid]['nb_an']++; $app[$aid]['ca_an'] += $ca;
+            if ($m >= 1 && $m <= 12) { $app[$aid]['nbMois'][$m]++; }
+            if ($dansPer) { $app[$aid]['nb_per']++; $app[$aid]['ca_per'] += $ca; }
+            $tc = trim((string) $r['type_contrat']); if ($tc === '') { $tc = '(n.c.)'; }
+            if (!isset($app[$aid]['mix'][$tc])) { $app[$aid]['mix'][$tc] = 0; }
+            $app[$aid]['mix'][$tc]++;
+            $cat = trim((string) $r['categorie']); if ($cat === '') { $cat = '(n.c.)'; }
+            if (!isset($app[$aid]['cat'][$cat])) { $app[$aid]['cat'][$cat] = 0; }
+            $app[$aid]['cat'][$cat]++;
+        } elseif ($estDevis) {
+            $app[$aid]['dev_an']++;
+            if ($dansPer) { $app[$aid]['dev_per']++; }
+        }
     }
+
+    // Peer group = apporteurs GP ayant produit au moins un contrat validé cette année
+    // (un apporteur qui n'a fait que des devis ne fausse pas le classement).
+    foreach ($app as $aid => $a) { if ($a['nb_an'] == 0) { unset($app[$aid]); } }
 
     // Totaux GP + agrégat "nous".
     $nbApp = count($app);
-    $totNbAn = 0; $totCaAn = 0; $totNbPer = 0; $totCaPer = 0;
-    $gpMix = array();
-    $nousNbPer = 0; $nousCaPer = 0; $nousNbAn = 0; $nousCaAn = 0; $nousMix = array(); $nbNousApp = 0;
+    $totNbAn = 0; $totCaAn = 0; $totNbPer = 0; $totCaPer = 0; $totDevPer = 0; $totDevAn = 0;
+    $gpMix = array(); $gpCat = array();
+    $nousNbPer = 0; $nousCaPer = 0; $nousNbAn = 0; $nousCaAn = 0; $nousDevPer = 0;
+    $nousMix = array(); $nousCat = array(); $nbNousApp = 0;
     foreach ($app as $a) {
         $totNbAn += $a['nb_an']; $totCaAn += $a['ca_an']; $totNbPer += $a['nb_per']; $totCaPer += $a['ca_per'];
+        $totDevPer += $a['dev_per']; $totDevAn += $a['dev_an'];
         foreach ($a['mix'] as $t => $n) { if (!isset($gpMix[$t])) { $gpMix[$t] = 0; } $gpMix[$t] += $n; }
+        foreach ($a['cat'] as $t => $n) { if (!isset($gpCat[$t])) { $gpCat[$t] = 0; } $gpCat[$t] += $n; }
         if ($a['nous']) {
             $nbNousApp++;
             $nousNbPer += $a['nb_per']; $nousCaPer += $a['ca_per']; $nousNbAn += $a['nb_an']; $nousCaAn += $a['ca_an'];
+            $nousDevPer += $a['dev_per'];
             foreach ($a['mix'] as $t => $n) { if (!isset($nousMix[$t])) { $nousMix[$t] = 0; } $nousMix[$t] += $n; }
+            foreach ($a['cat'] as $t => $n) { if (!isset($nousCat[$t])) { $nousCat[$t] = 0; } $nousCat[$t] += $n; }
         }
     }
 
@@ -796,6 +821,28 @@ if ($vue === 'concurrence') {
         $mixGP[] = ($totNbAn > 0) ? round($gpMix[$t] / $totNbAn * 100, 1) : 0;
     }
 
+    // 5) Taux de transformation devis → contrat (période) : nous vs GP + par apporteur.
+    $txNous = ($nousNbPer + $nousDevPer > 0) ? round($nousNbPer / ($nousNbPer + $nousDevPer) * 100, 1) : 0;
+    $txGP   = ($totNbPer + $totDevPer > 0) ? round($totNbPer / ($totNbPer + $totDevPer) * 100, 1) : 0;
+    $txLbl = array(); $txVal = array(); $txCol = array();
+    foreach ($topPer as $row) {
+        $a = isset($app[$row['id']]) ? $app[$row['id']] : null;
+        $den = $row['nb'] + ($a ? $a['dev_per'] : 0);
+        $txLbl[] = $row['societe'];
+        $txVal[] = ($den > 0) ? round($row['nb'] / $den * 100, 1) : 0;
+        $txCol[] = $row['nous'] ? '#1f5eff' : '#9db4e0';
+    }
+
+    // 6) Mix catégorie de véhicule (année) : notre répartition vs moyenne GP.
+    arsort($gpCat);
+    $catTop = array_slice(array_keys($gpCat), 0, 6);
+    $catLbl = array(); $catNous = array(); $catGP = array();
+    foreach ($catTop as $t) {
+        $catLbl[] = $t;
+        $catNous[] = ($nousNbAn > 0) ? round((isset($nousCat[$t]) ? $nousCat[$t] : 0) / $nousNbAn * 100, 1) : 0;
+        $catGP[] = ($totNbAn > 0) ? round($gpCat[$t] / $totNbAn * 100, 1) : 0;
+    }
+
     // ── Rendu ─────────────────────────────────────────────────────
     ?>
     <p class="muted">Comparaison de notre marque blanche (<strong><?php echo h($LABEL); ?></strong>) aux autres apporteurs du groupe <strong>GP</strong> (jl_app.lettrage = 'GP'), sur les contrats validés (status « V »). Année <strong><?php echo $annee; ?></strong> pour les graphiques ; classement sur la période <strong><?php echo dateFr($date_deb); ?> → <?php echo dateFr($date_fin); ?></strong>.</p>
@@ -810,6 +857,7 @@ if ($vue === 'concurrence') {
         <div class="stat"><b><?php echo $nousNbPer; ?></b><span>Nos contrats (période) · <?php echo $partPer; ?> % du GP</span></div>
         <div class="stat"><b><?php echo $totNbPer; ?></b><span>Total contrats GP (période) · <?php echo $nbApp; ?> apporteurs</span></div>
         <div class="stat"><b style="color:<?php echo $panierNous >= $panierGP ? '#1a7d49' : '#c02b2b'; ?>"><?php echo euros($panierNous); ?></b><span>Notre panier moyen · moy. GP <?php echo euros($panierGP); ?></span></div>
+        <div class="stat"><b style="color:<?php echo $txNous >= $txGP ? '#1a7d49' : '#c02b2b'; ?>"><?php echo $txNous; ?> %</b><span>Taux transfo devis→contrat · moy. GP <?php echo $txGP; ?> %</span></div>
         <div class="stat"><b>#<?php echo $rangNousAn !== null ? $rangNousAn : '—'; ?></b><span>Rang annuel · <?php echo $partAn; ?> % du GP (<?php echo $nousNbAn; ?>/<?php echo $totNbAn; ?>)</span></div>
     </div>
 
@@ -831,6 +879,14 @@ if ($vue === 'concurrence') {
         <div style="flex:1 1 460px;min-width:320px;background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px">
             <strong>Mix produit — nous vs moyenne GP (<?php echo $annee; ?>)</strong>
             <div style="height:320px;margin-top:8px"><canvas id="cMix"></canvas></div>
+        </div>
+        <div style="flex:1 1 460px;min-width:320px;background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px">
+            <strong>Taux de transformation devis→contrat — période (nous en bleu)</strong>
+            <div style="height:320px;margin-top:8px"><canvas id="cTx"></canvas></div>
+        </div>
+        <div style="flex:1 1 460px;min-width:320px;background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px">
+            <strong>Mix catégorie véhicule — nous vs moyenne GP (<?php echo $annee; ?>)</strong>
+            <div style="height:320px;margin-top:8px"><canvas id="cCat"></canvas></div>
         </div>
     </div>
 
@@ -902,6 +958,26 @@ if ($vue === 'concurrence') {
                 data: { labels: <?php echo json_encode($mixLbl); ?>, datasets: [
                     { label: 'MCJ COURTAGE', data: <?php echo json_encode($mixNous); ?>, backgroundColor: '#1f5eff' },
                     { label: 'Moyenne GP', data: <?php echo json_encode($mixGP); ?>, backgroundColor: '#9db4e0' } ] },
+                options: { responsive: true, maintainAspectRatio: false,
+                    plugins: { tooltip: { callbacks: { label: function (c) { return c.dataset.label + ' : ' + c.parsed.y + ' %'; } } } },
+                    scales: { y: { beginAtZero: true, ticks: { callback: function (v) { return v + ' %'; } }, title: { display: true, text: '% des contrats' } } } } });
+        }
+
+        var elT = document.getElementById('cTx');
+        if (elT) {
+            new Chart(elT, { type: 'bar',
+                data: { labels: <?php echo json_encode($txLbl); ?>, datasets: [{ data: <?php echo json_encode($txVal); ?>, backgroundColor: <?php echo json_encode($txCol); ?> }] },
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { return c.parsed.x + ' % transformés'; } } } },
+                    scales: { x: { beginAtZero: true, max: 100, ticks: { callback: function (v) { return v + ' %'; } } } } } });
+        }
+
+        var elC = document.getElementById('cCat');
+        if (elC) {
+            new Chart(elC, { type: 'bar',
+                data: { labels: <?php echo json_encode($catLbl); ?>, datasets: [
+                    { label: 'MCJ COURTAGE', data: <?php echo json_encode($catNous); ?>, backgroundColor: '#1f5eff' },
+                    { label: 'Moyenne GP', data: <?php echo json_encode($catGP); ?>, backgroundColor: '#9db4e0' } ] },
                 options: { responsive: true, maintainAspectRatio: false,
                     plugins: { tooltip: { callbacks: { label: function (c) { return c.dataset.label + ' : ' + c.parsed.y + ' %'; } } } },
                     scales: { y: { beginAtZero: true, ticks: { callback: function (v) { return v + ' %'; } }, title: { display: true, text: '% des contrats' } } } } });
