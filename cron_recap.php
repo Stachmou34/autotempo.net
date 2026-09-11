@@ -11,7 +11,7 @@ if (!$ids) { fwrite(STDERR, "Aucun apporteur REYNARD\n"); exit(0); }
 $hier = date('Y-m-d', strtotime('-1 day'));
 $in = implode(',', array_fill(0, count($ids), '?'));
 
-$sql = "SELECT g.id, g.id_app, g.num_garantie, g.num_contrat, g.type_contrat, g.formule,
+$sql = "SELECT g.id, g.id_app, g.num_garantie, g.num_contrat, g.status, g.type_contrat, g.formule,
                g.prix_assitance, g.prix_pj, g.id_lb2,
                r.note3, r.pa, r.marge AS r_marge, r.honoraire AS r_hono, r.etat,
                cl.nom AS cnom, cl.prenom AS cprenom, cl.ville AS cville,
@@ -29,6 +29,8 @@ $rows = $st->fetchAll();
 $nbDevis = 0; $nbContrats = 0; $totRetro = 0; $lignes = '';
 foreach ($rows as $d) {
     $estContrat = ($d['num_contrat'] !== '' && $d['num_contrat'] !== null);
+    // Un devis n'est valide que si la garantie est en statut 'V' (on ignore les demandes non valides).
+    if (!$estContrat && $d['status'] !== 'V') { continue; }
     if ($estContrat) { $nbContrats++; } else { $nbDevis++; }
     $mb = isset($apInfo[(int) $d['id_app']]) ? $apInfo[(int) $d['id_app']]['mb'] : 0;
     $soc = isset($apInfo[(int) $d['id_app']]) ? $apInfo[(int) $d['id_app']]['societe'] : '';
@@ -45,14 +47,16 @@ foreach ($rows as $d) {
         . '</tr>';
 }
 
+$nbTotal = $nbContrats + $nbDevis; // contrats + devis valides (statut 'V')
+
 $corps = '<p>Activité MCJ-Courtage du <strong>' . date('d/m/Y', strtotime($hier)) . '</strong> :</p>'
     . '<ul>'
-    . '<li><b>' . count($rows) . '</b> demande(s) au total</li>'
+    . '<li><b>' . $nbTotal . '</b> demande(s) au total</li>'
     . '<li><b>' . $nbContrats . '</b> contrat(s) — <b>' . $nbDevis . '</b> devis</li>'
     . '<li>Rétro globale cumulée : <b>' . eur($totRetro) . '</b></li>'
     . '</ul>';
 
-if ($rows) {
+if ($nbTotal) {
     $corps .= '<table style="border-collapse:collapse;font-size:13px;margin-top:10px">'
         . '<tr style="background:#f7f9fd"><th style="border:1px solid #ddd;padding:6px">Type</th>'
         . '<th style="border:1px solid #ddd;padding:6px">Société</th>'
@@ -63,6 +67,6 @@ if ($rows) {
     $corps .= '<p style="color:#888">Aucune activité la veille.</p>';
 }
 
-$sujet = 'Récap MCJ-Courtage du ' . date('d/m/Y', strtotime($hier)) . ' — ' . count($rows) . ' demande(s)';
+$sujet = 'Récap MCJ-Courtage du ' . date('d/m/Y', strtotime($hier)) . ' — ' . $nbTotal . ' demande(s)';
 $ok = envoyerMail($EMAIL_TO, $EMAIL_FROM, $sujet, gabaritMail('Récapitulatif de la veille', $corps));
-logCron('cron_recap', ($ok ? 'Email envoyé' : 'ECHEC envoi mail') . ' à ' . $EMAIL_TO . ' — ' . count($rows) . ' demande(s) le ' . $hier . ' (' . $nbContrats . ' contrats, ' . $nbDevis . ' devis)');
+logCron('cron_recap', ($ok ? 'Email envoyé' : 'ECHEC envoi mail') . ' à ' . $EMAIL_TO . ' — ' . $nbTotal . ' demande(s) le ' . $hier . ' (' . $nbContrats . ' contrats, ' . $nbDevis . ' devis)');
