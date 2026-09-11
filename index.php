@@ -697,7 +697,7 @@ if ($vue === 'concurrence') {
         $j = substr((string) $r['jour'], 0, 10);
         $dansPer = ($j >= $date_deb && $j <= $date_fin);
         $estContrat = (trim((string) $r['num_contrat']) !== '' && $r['status'] === 'V');
-        $estDevis = (trim((string) $r['num_contrat']) === '');
+        $estDevis = (trim((string) $r['num_contrat']) === '' && $r['status'] === 'V');
         if ($estContrat) {
             $ca = num($r['prix_formule']);
             $app[$aid]['nb_an']++; $app[$aid]['ca_an'] += $ca;
