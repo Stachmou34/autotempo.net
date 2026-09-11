@@ -24,7 +24,7 @@ if ($last === 0) {
 }
 
 // Nouvelles garanties depuis le dernier id vu.
-$sql = "SELECT g.id, g.id_app, g.num_garantie, g.num_contrat, g.type_contrat, g.formule, g.date_demande,
+$sql = "SELECT g.id, g.id_app, g.num_garantie, g.num_contrat, g.status, g.type_contrat, g.formule, g.date_demande,
                g.prix_assitance, g.prix_pj, g.id_lb2,
                r.note3, r.pa, r.marge AS r_marge, r.honoraire AS r_hono, r.etat,
                cl.nom AS cnom, cl.prenom AS cprenom, cl.ville AS cville, cl.mobile AS cmobile, cl.mail AS cmail,
@@ -43,8 +43,12 @@ if (!$news) { logCron('cron_devis', 'Aucun nouveau devis (dernier id vu = ' . $l
 
 $lignes = '';
 $totRetro = 0;
+$nbRetenus = 0;
 foreach ($news as $d) {
     $estContrat = ($d['num_contrat'] !== '' && $d['num_contrat'] !== null);
+    // Un devis n'est valide que si la garantie est en statut 'V' (on ignore les demandes non valides).
+    if (!$estContrat && $d['status'] !== 'V') { continue; }
+    $nbRetenus++;
     $type = $estContrat ? 'Contrat' : 'Devis';
     $badge = $estContrat ? '#1a7d49' : '#d98a00';
     $veh = trim($d['marque'] . ' ' . $d['modele']);
@@ -64,7 +68,17 @@ foreach ($news as $d) {
         . '</tr>';
 }
 
-$corps = '<p>' . count($news) . ' nouvelle(s) demande(s) pour MCJ-Courtage — rétro globale : <b>' . eur($totRetro) . '</b></p>'
+// Mémorise le dernier id traité (on avance même si aucune demande retenue, pour ne pas re-scanner).
+$dernier = (int) $news[count($news) - 1]['id'];
+file_put_contents($stateFile, $dernier);
+
+// Aucune demande valide (que des devis non-'V') : rien à notifier.
+if ($nbRetenus === 0) {
+    logCron('cron_devis', 'Aucune nouvelle demande valide (statut V) — ' . count($news) . ' ligne(s) ignorée(s), dernier id = ' . $dernier);
+    exit(0);
+}
+
+$corps = '<p>' . $nbRetenus . ' nouvelle(s) demande(s) pour MCJ-Courtage — rétro globale : <b>' . eur($totRetro) . '</b></p>'
     . '<table style="border-collapse:collapse;font-size:13px">'
     . '<tr style="background:#f7f9fd">'
     . '<th style="border:1px solid #ddd;padding:6px">Type</th><th style="border:1px solid #ddd;padding:6px">Date</th>'
@@ -74,10 +88,7 @@ $corps = '<p>' . count($news) . ' nouvelle(s) demande(s) pour MCJ-Courtage — r
     . '<th style="border:1px solid #ddd;padding:6px">Rétro globale</th></tr>'
     . $lignes . '</table>';
 
-$sujet = count($news) . ' nouveau(x) devis MCJ-Courtage';
+$sujet = $nbRetenus . ' nouveau(x) devis MCJ-Courtage';
 $ok = envoyerMail($EMAIL_TO, $EMAIL_FROM, $sujet, gabaritMail('Nouveaux devis', $corps));
 
-// Mémorise le dernier id traité.
-$dernier = (int) $news[count($news) - 1]['id'];
-file_put_contents($stateFile, $dernier);
-logCron('cron_devis', ($ok ? 'Email envoyé' : 'ECHEC envoi mail') . ' à ' . $EMAIL_TO . ' — ' . count($news) . ' nouveau(x) devis, dernier id = ' . $dernier);
+logCron('cron_devis', ($ok ? 'Email envoyé' : 'ECHEC envoi mail') . ' à ' . $EMAIL_TO . ' — ' . $nbRetenus . ' nouveau(x) devis, dernier id = ' . $dernier);

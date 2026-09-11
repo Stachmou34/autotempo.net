@@ -960,6 +960,7 @@ if ($vue === 'devis') {
                 LEFT JOIN jl_client cl ON cl.id = g.id_cli
                 LEFT JOIN jl_vehicule v ON v.id = g.id_vehi
                 WHERE g.id_app IN ($in) AND (g.num_contrat = '' OR g.num_contrat IS NULL)
+                      AND g.status = 'V'
                       AND DATE(g.date_demande) BETWEEN ? AND ?
                 ORDER BY g.date_demande DESC, g.id DESC";
         $st = $pdo->prepare($sql);
