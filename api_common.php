@@ -22,6 +22,11 @@ function apiEnsureDir($dir) {
     if (!is_dir($dir) && !@mkdir($dir, 0700, true)) {
         throw new Exception('Dossier de données API non inscriptible : ' . $dir);
     }
+    // Dossier créé par un autre compte (ex. root) : sans ce contrôle, les jetons seraient
+    // silencieusement introuvables et tout appel répondrait 401.
+    if (!is_readable($dir) || !is_writable($dir)) {
+        throw new Exception('Dossier de données API inaccessible (propriétaire ?) : ' . $dir);
+    }
 }
 
 function apiRandomHex($octets) {
@@ -162,8 +167,12 @@ function apiErreur($status, $code, $message) {
 function apiHandle($req, $getPdo, $dir) {
     if (empty($req['https'])) { return apiErreur(403, 'https_requis', 'Utilisez https://'); }
 
-    $jeton = apiTokenCheck($dir, apiBearer($req['auth']));
-    if ($jeton === null) { return apiErreur(401, 'non_autorise', 'Jeton absent, invalide ou révoqué'); }
+    $presente = apiBearer($req['auth']);
+    if ($presente === '') {
+        return apiErreur(401, 'jeton_absent', 'Aucun jeton reçu : envoyez "Authorization: Bearer <jeton>" (ou "X-Authorization: Bearer <jeton>")');
+    }
+    $jeton = apiTokenCheck($dir, $presente);
+    if ($jeton === null) { return apiErreur(401, 'jeton_invalide', 'Jeton invalide ou révoqué'); }
 
     $routes = array('echeances' => array('GET', MCJ_API_SCOPE_LIRE), 'relances' => array('POST', MCJ_API_SCOPE_ECRIRE));
     if (!isset($routes[$req['route']])) { return apiErreur(404, 'introuvable', 'Endpoints : echeances, relances'); }

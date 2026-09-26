@@ -67,6 +67,7 @@ try {
     list($status, $payload) = apiHandle($req, $getPdo, $dir);
 } catch (Exception $e) {
     @apiLog($dir, 'ERREUR ' . $route . ' : ' . $e->getMessage());
+    error_log('MCJ API : ' . $e->getMessage()); // si le dossier de données est inaccessible, api.log l'est aussi
     $status = 500;
     $payload = array('erreur' => 'serveur', 'message' => 'Erreur interne');
 }
