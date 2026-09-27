@@ -20,6 +20,9 @@
 date_default_timezone_set('Europe/Paris');
 error_reporting(E_ALL);
 ini_set('display_errors', '0');
+// Nombres JSON sous leur forme courte (159.37 et non 159.3700000000000045…),
+// quel que soit le serialize_precision du php.ini de l'hébergeur (PHP 7.1+).
+ini_set('serialize_precision', '-1');
 require dirname(__FILE__) . '/api_common.php';
 
 header('Content-Type: application/json; charset=utf-8');
