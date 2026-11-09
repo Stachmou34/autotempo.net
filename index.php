@@ -282,7 +282,7 @@ echo '<p class="muted">Sociétés : <strong>' . h(implode(' · ', $societes)) . 
 
 // Vue courante (BI)
 $vue = isset($_GET['vue']) ? $_GET['vue'] : 'bordereau';
-if (!in_array($vue, array('bordereau', 'production', 'concurrence', 'depenses', 'devis', 'renouvellements'), true)) { $vue = 'bordereau'; }
+if (!in_array($vue, array('bordereau', 'production', 'previsionnel', 'concurrence', 'depenses', 'devis', 'renouvellements'), true)) { $vue = 'bordereau'; }
 $annee = (isset($_GET['annee']) && preg_match('/^\d{4}$/', $_GET['annee'])) ? (int) $_GET['annee'] : (int) date('Y');
 $moisSel = (isset($_GET['mois']) && preg_match('/^(1[0-2]|[1-9])$/', $_GET['mois'])) ? (int) $_GET['mois'] : (int) date('n');
 
@@ -308,6 +308,7 @@ if ($soc_filtre !== 'TOUTES') {
 echo '<div class="nav">'
    . '<a href="?vue=bordereau"' . ($vue === 'bordereau' ? ' class="on"' : '') . '>Bordereau rétrocession</a>'
    . '<a href="?vue=production"' . ($vue === 'production' ? ' class="on"' : '') . '>Production</a>'
+   . '<a href="?vue=previsionnel"' . ($vue === 'previsionnel' ? ' class="on"' : '') . '>Prévisionnel</a>'
    . '<a href="?vue=concurrence"' . ($vue === 'concurrence' ? ' class="on"' : '') . '>Concurrence</a>'
    . '<a href="?vue=devis"' . ($vue === 'devis' ? ' class="on"' : '') . '>Devis</a>'
    . '<a href="?vue=renouvellements"' . ($vue === 'renouvellements' ? ' class="on"' : '') . '>Renouvellements</a>'
@@ -317,6 +318,7 @@ echo '<div class="nav">'
 // Formulaire de filtres commun (période + société), + état/tri pour le bordereau
 $labelPeriode = ($vue === 'renouvellements') ? 'Échéance entre' : 'Période';
 ?>
+<?php if ($vue !== 'previsionnel'): // le prévisionnel a ses propres réglages ?>
 <form class="filtres" method="get">
     <input type="hidden" name="vue" value="<?php echo h($vue); ?>">
     <?php if ($vue === 'production' || $vue === 'concurrence' || $vue === 'depenses'): ?>
@@ -389,6 +391,7 @@ $labelPeriode = ($vue === 'renouvellements') ? 'Échéance entre' : 'Période';
     <?php endif; ?>
     <button type="submit">Appliquer</button>
 </form>
+<?php endif; ?>
 <?php
 
 // =================================================================
@@ -950,6 +953,274 @@ if ($vue === 'concurrence') {
     })();
     </script>
     <?php endif; ?>
+    </body></html>
+    <?php
+    exit;
+}
+
+// =================================================================
+//  VUE PRÉVISIONNEL : projection dynamique et bilan potentiel au 31/12
+//  (données réelles ici, calculs et graphiques dans previsionnel.js)
+// =================================================================
+if ($vue === 'previsionnel') {
+    $an = (int) date('Y'); $anP = $an - 1; $mcPv = (int) date('n');
+    $zeros = array_fill(0, 12, 0.0);
+    $pv = array('annee' => $an, 'mc' => $mcPv, 'jc' => (int) date('j'), 'jm' => (int) date('t'),
+                'retroN' => $zeros, 'retroP' => $zeros, 'qonto' => false,
+                'depN' => $zeros, 'encN' => $zeros, 'depP' => $zeros, 'solde' => null, 'soldeFin' => array());
+
+    // Rétro mensuelle N et N-1 (même calcul que la Production : date de souscription).
+    if ($ids) {
+        $in = implode(',', array_fill(0, count($ids), '?'));
+        $st = $pdo->prepare("SELECT g.id_app, DATE(g.date_demande) AS d, g.prix_assitance, g.prix_pj, g.id_lb2,
+                                    r.note3, r.pa, r.marge AS r_marge, r.honoraire AS r_hono, r.etat, v.categorie AS categorie
+                             FROM jl_garantie g
+                             JOIN jl_reglement r ON r.id_garantie = g.id
+                             LEFT JOIN jl_vehicule v ON v.id = g.id_vehi
+                             WHERE g.id_app IN ($in) AND g.num_contrat <> '' AND DATE(g.date_demande) BETWEEN ? AND ?");
+        $p = $ids; $p[] = $anP . '-01-01'; $p[] = date('Y-m-d');
+        $st->execute($p);
+        foreach ($st->fetchAll() as $r) {
+            $mb = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['mb'] : 0;
+            $cle = ((int) substr($r['d'], 0, 4) === $an) ? 'retroN' : 'retroP';
+            $pv[$cle][(int) substr($r['d'], 5, 2) - 1] += retroLigne($r, $mb);
+        }
+    }
+
+    // Dépenses, encaissements et trésorerie depuis Qonto (facultatif : sinon saisie manuelle).
+    $msgQonto = '';
+    $cfgQ = qontoConfig();
+    if ($cfgQ === null) {
+        $msgQonto = 'Qonto n\'est pas connecté (voir l\'onglet Dépenses) : indique tes dépenses mensuelles estimées dans les réglages.';
+    } else {
+        try {
+            $org = qontoOrganisation($cfgQ, false);
+            $solde = 0.0;
+            foreach ($org['comptes'] as $c) { $solde += $c['solde']; }
+            $agN = qontoAgreger(qontoTransactions($cfgQ, $org, $an . '-01-01', date('Y-m-d'), false), array(), $an, '0', '0');
+            $agP = qontoAgreger(qontoTransactions($cfgQ, $org, $anP . '-01-01', $anP . '-12-31', false), array(), $anP, '0', '0');
+            for ($m = 1; $m <= 12; $m++) {
+                $pv['depN'][$m - 1] = $agN['mois'][$m]['dep']; $pv['encN'][$m - 1] = $agN['mois'][$m]['enc'];
+                $pv['depP'][$m - 1] = $agP['mois'][$m]['dep'];
+            }
+            // Solde au 1er janvier puis à chaque fin de mois écoulé, reconstruit à rebours depuis le solde actuel.
+            $apres = 0.0;
+            for ($m = $mcPv; $m >= 1; $m--) {
+                $apres += $agN['mois'][$m]['enc'] - $agN['mois'][$m]['dep'];
+                $pv['soldeFin'][$m - 1] = round($solde - $apres, 2);
+            }
+            ksort($pv['soldeFin']);
+            $pv['soldeFin'] = array_values($pv['soldeFin']);
+            $pv['solde'] = round($solde, 2);
+            $pv['qonto'] = true;
+        } catch (Exception $e) {
+            $msgQonto = 'Lecture Qonto impossible (' . $e->getMessage() . ') : indique tes dépenses mensuelles estimées dans les réglages.';
+        }
+    }
+    foreach (array('retroN', 'retroP', 'depN', 'encN', 'depP') as $k) { $pv[$k] = array_map(function ($v) { return round($v, 2); }, $pv[$k]); }
+    $jsV = @filemtime(dirname(__FILE__) . '/previsionnel.js');
+    ?>
+    <style>
+    .pv{--bleu:#2a78d6;--orange:#eb6834;--aqua:#1baf7a;--encre:#0b0b0b;--encre2:#52514e;--muet:#898781;--trait:rgba(11,11,11,.08);--bon:#006300;--mauvais:#d03b3b;color:var(--encre)}
+    .pv h2{border:0;margin:0;padding:0;font-size:26px;letter-spacing:-.02em}
+    .pv h3{margin:0;font-size:15px;font-weight:650}
+    .pv-tete{display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:16px;margin:22px 0 16px}
+    .pv-tete p,.pv-sous{margin:4px 0 0;color:var(--encre2);font-size:13px}
+    .pv-seg{display:inline-flex;background:#e6eaf2;border-radius:12px;padding:4px;gap:2px}
+    .pv-seg button{border:0;background:transparent;padding:8px 16px;border-radius:9px;font:inherit;font-size:14px;font-weight:600;color:var(--encre2);cursor:pointer;transition:background .2s,color .2s,box-shadow .2s}
+    .pv-seg button:hover{color:var(--encre)}
+    .pv-seg button[aria-pressed=true]{background:#fff;color:var(--encre);box-shadow:0 1px 4px rgba(16,24,40,.14)}
+    .pv-info{background:#fff7e6;border:1px solid #f5d79a;color:#6b4e00;border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:14px}
+    .pv-hero{position:relative;overflow:hidden;background:linear-gradient(120deg,#0d2350 0%,#173f9e 55%,#1f5eff 100%);color:#fff;border-radius:20px;padding:28px 30px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:18px;box-shadow:0 14px 34px rgba(23,63,158,.28)}
+    .pv-hero:after{content:"";position:absolute;right:-60px;top:-80px;width:280px;height:280px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.16),rgba(255,255,255,0) 70%)}
+    .pv-hero-lib{font-size:14px;opacity:.85}
+    .pv-hero-val{font-size:54px;font-weight:700;letter-spacing:-.03em;line-height:1.1;margin:6px 0}
+    .pv-hero-sous{font-size:14px;opacity:.85}
+    .pv-hero .pv-delta{background:#fff;padding:6px 12px;border-radius:999px;position:relative;z-index:1}
+    .pv-delta{font-size:13px;font-weight:600} .pv-bon{color:var(--bon)} .pv-mauvais{color:var(--mauvais)} .pv-delta:empty{display:none}
+    .pv-tuiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin:16px 0}
+    .pv-carte{background:#fff;border:1px solid var(--trait);border-radius:16px;padding:18px 20px;box-shadow:0 1px 2px rgba(16,24,40,.04),0 4px 14px rgba(16,24,40,.04)}
+    .pv-tuile .pv-lib{font-size:13px;color:var(--encre2)}
+    .pv-tuile .pv-val{font-size:28px;font-weight:650;letter-spacing:-.02em;margin:6px 0 2px}
+    .pv-tuile .pv-pied{font-size:12px;color:var(--muet);margin-top:4px}
+    .pv-jauge{height:8px;border-radius:999px;background:#cde2fb;overflow:hidden;margin:12px 0 8px}
+    .pv-jauge span{display:block;height:100%;border-radius:999px;background:var(--bleu);width:0;transition:width .45s cubic-bezier(.2,.8,.2,1)}
+    .pv-statut{font-size:15px;font-weight:650;margin-top:8px}
+    .pv-grille{display:grid;grid-template-columns:330px minmax(0,1fr);gap:16px;align-items:start}
+    .pv-droite{display:grid;gap:16px;min-width:0}
+    .pv-reglages{position:sticky;top:12px}
+    .pv-duo{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:16px}
+    @media (max-width:1100px){.pv-grille,.pv-duo{grid-template-columns:minmax(0,1fr)}.pv-reglages{position:static}}
+    .pv-graph{position:relative;height:300px;margin-top:12px} .pv-graph-l{height:380px}
+    .pv-reglages h3{margin-bottom:12px}
+    .pv-champ{margin:14px 0}
+    .pv-champ label{display:flex;justify-content:space-between;gap:8px;font-size:13px;font-weight:600;color:var(--encre2);margin-bottom:6px}
+    .pv-champ output{color:var(--encre);font-variant-numeric:tabular-nums}
+    .pv input[type=range]{width:100%;accent-color:var(--bleu);margin:0}
+    .pv input[type=number]{width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #d5dbe6;border-radius:9px;font:inherit;background:#fbfcfe}
+    .pv input[type=number]:focus{outline:2px solid rgba(42,120,214,.35);border-color:var(--bleu)}
+    .pv-ligne{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--muet)}
+    .pv-ligne span{flex:1} .pv-ligne input[type=number]{width:96px;padding:5px 8px}
+    .pv fieldset{border:1px solid var(--trait);border-radius:12px;padding:4px 12px 2px;margin:16px 0}
+    .pv legend{font-size:13px;font-weight:650;padding:0 6px} .pv legend small{font-weight:400;color:var(--muet)}
+    .pv-case{display:flex;align-items:center;gap:8px;font-size:13px;margin:10px 0;cursor:pointer}
+    .pv-case input{accent-color:var(--bleu);width:16px;height:16px}
+    .pv-lien{border:0;background:none;color:var(--bleu);font:inherit;font-size:13px;cursor:pointer;padding:6px 0;margin-top:4px}
+    .pv-cles{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:12px;color:var(--encre2)}
+    .pv-cles i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+    .pv details{margin-top:14px} .pv summary{cursor:pointer;color:var(--bleu);font-size:13px;font-weight:600}
+    .pv table td.num{font-variant-numeric:tabular-nums} .pv tr.pv-proj td{color:var(--encre2);background:#fafbfd} .pv tr.pv-encours td{background:#f1f6fe}
+    .pv-hyp{margin-top:16px;font-size:12px;color:var(--encre2);line-height:1.7}
+    .pv-hyp ul{margin:6px 0 0;padding-left:18px}
+    .pv-vide{display:flex;align-items:center;justify-content:center;height:300px;color:var(--muet);text-align:center;font-size:14px}
+    </style>
+
+    <div class="pv">
+        <div class="pv-tete">
+            <div>
+                <h2>Prévisionnel <?php echo $an; ?></h2>
+                <p>Projection au 31 décembre à partir de la rétro JLASSURE<?php echo $pv['qonto'] ? ' et des comptes Qonto' : ''; ?> · données au <?php echo date('d/m/Y'); ?></p>
+            </div>
+            <div class="pv-seg" role="group" aria-label="Scénario">
+                <button type="button" data-scenario="prudent">Prudent</button>
+                <button type="button" data-scenario="realiste">Réaliste</button>
+                <button type="button" data-scenario="ambitieux">Ambitieux</button>
+            </div>
+        </div>
+        <?php if ($msgQonto !== ''): ?><div class="pv-info">ℹ️ <?php echo h($msgQonto); ?></div><?php endif; ?>
+
+        <section class="pv-hero" aria-live="polite">
+            <div>
+                <div class="pv-hero-lib">Résultat net potentiel au 31 décembre <?php echo $an; ?></div>
+                <div class="pv-hero-val" id="pvNet">—</div>
+                <div class="pv-hero-sous" id="pvNetSous"></div>
+            </div>
+            <span class="pv-delta" id="pvNetDelta"></span>
+        </section>
+
+        <div class="pv-tuiles">
+            <div class="pv-carte pv-tuile">
+                <div class="pv-lib">Chiffre d'affaires potentiel</div>
+                <div class="pv-val" id="pvCa">—</div>
+                <div class="pv-delta" id="pvCaDelta"></div>
+                <div class="pv-pied" id="pvCaSous"></div>
+            </div>
+            <div class="pv-carte pv-tuile">
+                <div class="pv-lib">Charges de l'année</div>
+                <div class="pv-val" id="pvCharges">—</div>
+                <div class="pv-pied" id="pvChargesSous"></div>
+            </div>
+            <div class="pv-carte pv-tuile">
+                <div class="pv-lib">Trésorerie au 31/12</div>
+                <div class="pv-val" id="pvTresoFin">—</div>
+                <div class="pv-pied" id="pvTresoSous"><?php echo $pv['qonto'] ? '' : 'Disponible une fois Qonto connecté'; ?></div>
+            </div>
+            <div class="pv-carte pv-tuile">
+                <div class="pv-lib">Objectif annuel</div>
+                <div class="pv-statut" id="pvObjStatut"></div>
+                <div class="pv-jauge" role="presentation"><span id="pvJauge"></span></div>
+                <div class="pv-pied" id="pvObjSous"></div>
+            </div>
+        </div>
+
+        <div class="pv-grille">
+            <aside class="pv-carte pv-reglages">
+                <h3>Réglages</h3>
+                <div class="pv-champ">
+                    <label for="pv_croissance">Croissance de la rétro <output id="pvOut_croissance"></output></label>
+                    <input type="range" id="pv_croissance" min="-10" max="15" step="0.5">
+                </div>
+                <div class="pv-champ">
+                    <label for="pv_depenses">Évolution des dépenses <output id="pvOut_depenses"></output></label>
+                    <input type="range" id="pv_depenses" min="-30" max="50" step="5">
+                </div>
+                <?php if (!$pv['qonto']): ?>
+                <div class="pv-champ">
+                    <label for="pv_depManuelle">Dépenses mensuelles estimées (€)</label>
+                    <input type="number" id="pv_depManuelle" min="0" step="100">
+                </div>
+                <?php endif; ?>
+                <div class="pv-champ">
+                    <label for="pv_exceptionnelles">Dépenses exceptionnelles d'ici décembre (€)</label>
+                    <input type="number" id="pv_exceptionnelles" min="0" step="100">
+                </div>
+                <fieldset>
+                    <legend>Nouveaux leviers <small>· dès le mois prochain</small></legend>
+                    <div class="pv-champ">
+                        <label for="pv_annuelles">Annuelles résiliés <output id="pvOut_annuelles"></output></label>
+                        <input type="range" id="pv_annuelles" min="0" max="30" step="1">
+                        <div class="pv-ligne"><span>Commission moyenne (€)</span><input type="number" id="pv_commAnnuelle" min="0" step="10" aria-label="Commission moyenne par annuelle"></div>
+                    </div>
+                    <div class="pv-champ">
+                        <label for="pv_panne">Garanties panne <output id="pvOut_panne"></output></label>
+                        <input type="range" id="pv_panne" min="0" max="30" step="1">
+                        <div class="pv-ligne"><span>Commission moyenne (€)</span><input type="number" id="pv_commPanne" min="0" step="10" aria-label="Commission moyenne par garantie panne"></div>
+                    </div>
+                </fieldset>
+                <div class="pv-champ">
+                    <label for="pv_objectif">Objectif de chiffre d'affaires <?php echo $an; ?> (€)</label>
+                    <input type="number" id="pv_objectif" min="0" step="1000">
+                </div>
+                <label class="pv-case"><input type="checkbox" id="pvSais"> Saisonnalité de <?php echo $anP; ?></label>
+                <label class="pv-case"><input type="checkbox" id="pvImpot"> Estimer l'impôt sur les sociétés</label>
+                <button type="button" id="pvReset" class="pv-lien">↺ Réinitialiser les réglages</button>
+            </aside>
+
+            <div class="pv-droite">
+            <section class="pv-carte">
+                <h3>Trajectoire du chiffre d'affaires</h3>
+                <p class="pv-sous">Rétro + nouveaux leviers, cumulés en fin de mois · <span id="pvFourchette"></span></p>
+                <div class="pv-graph pv-graph-l"><canvas id="pvTrajectoire" role="img" aria-label="Chiffre d'affaires cumulé : réalisé, projection, fourchette, année précédente et objectif"></canvas></div>
+            </section>
+            <section class="pv-carte">
+                <h3>Mois par mois</h3>
+                <p class="pv-sous">Couleur pleine : réel · moyenne : mois en cours · claire : projeté</p>
+                <div class="pv-graph"><canvas id="pvMois" role="img" aria-label="Rétro, nouveaux leviers et dépenses par mois"></canvas></div>
+                <details>
+                    <summary>Voir le tableau</summary>
+                    <div style="overflow:auto"><table>
+                        <thead><tr><th>Mois</th><th>Statut</th><th class="num">Rétro</th><th class="num">Leviers</th><th class="num">Dépenses</th><th class="num">Résultat</th><th class="num">Trésorerie fin de mois</th></tr></thead>
+                        <tbody id="pvTable"></tbody>
+                    </table></div>
+                </details>
+            </section>
+            </div>
+        </div>
+
+        <div class="pv-duo">
+            <section class="pv-carte">
+                <h3>Bilan potentiel au 31/12</h3>
+                <p class="pv-sous">Du chiffre d'affaires au résultat net</p>
+                <div class="pv-cles"><span><i style="background:var(--bleu)"></i>Rétro</span><span><i style="background:var(--aqua)"></i>Nouveaux leviers</span><span><i style="background:var(--orange)"></i>Charges</span><span><i style="background:var(--encre2)"></i>Résultat</span></div>
+                <div class="pv-graph"><canvas id="pvCascade" role="img" aria-label="Cascade du chiffre d'affaires au résultat net"></canvas></div>
+            </section>
+            <section class="pv-carte">
+                <h3>Trésorerie</h3>
+                <p class="pv-sous">Solde de tous les comptes Qonto, fin de mois</p>
+                <?php if ($pv['qonto']): ?>
+                <div class="pv-graph"><canvas id="pvTreso" role="img" aria-label="Trésorerie réelle puis projetée jusqu'au 31 décembre"></canvas></div>
+                <?php else: ?>
+                <div class="pv-vide">Connecte Qonto (onglet Dépenses)<br>pour suivre et projeter la trésorerie.</div>
+                <?php endif; ?>
+            </section>
+        </div>
+
+        <div class="pv-hyp">
+            <strong>Comment c'est calculé</strong>
+            <ul>
+                <li>Mois passés : rétro réelle (même calcul que l'onglet Production) et dépenses réelles Qonto, virements internes exclus.</li>
+                <li>Mois en cours : rythme actuel prolongé jusqu'à la fin du mois, comme le « potentiel du mois » de la Production.</li>
+                <li>Mois à venir : moyenne des 3 derniers mois complets — rétro <span id="pvHypBase"></span>, dépenses <span id="pvHypDep"></span> — ajustée par la croissance choisie. Saisonnalité : <span id="pvHypSais"></span>.</li>
+                <li>Scénarios : prudent = −2 %/mois de rétro et +10 % de dépenses ; ambitieux = +3 %/mois. La zone bleutée montre l'écart entre les deux.</li>
+                <li>Trésorerie : on suppose la rétro encaissée le mois où elle est due ; l'impôt (taux PME 15 % jusqu'à 42 500 €, 25 % au-delà, si éligible) se paie l'année suivante. Estimation indicative, à valider avec ton expert-comptable.</li>
+                <li>Tes réglages sont gardés dans ce navigateur.</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>window.PV = <?php echo json_encode($pv); ?>;</script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="previsionnel.js?v=<?php echo (int) $jsV; ?>"></script>
     </body></html>
     <?php
     exit;
