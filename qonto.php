@@ -25,6 +25,22 @@ function qontoConfig() {
     return array('login' => trim($c['login']), 'secret' => trim($c['secret']));
 }
 
+/** Pourquoi qontoConfig() renvoie null, en clair ('' si tout va bien). */
+function qontoProbleme() {
+    $f = qontoConfigFile();
+    if (!file_exists($f)) { return 'le fichier ' . $f . ' n\'existe pas'; }
+    if (!is_readable($f)) {
+        $uid = @fileowner($f);
+        $proprio = ($uid !== false && function_exists('posix_getpwuid') && ($p = @posix_getpwuid($uid))) ? $p['name'] : 'un autre compte';
+        $moi = (function_exists('posix_geteuid') && ($u = @posix_getpwuid(posix_geteuid()))) ? $u['name'] : get_current_user();
+        return 'le fichier ' . $f . ' appartient à ' . $proprio . ' : le site (compte ' . $moi . ') ne peut pas le lire';
+    }
+    $c = @parse_ini_file($f);
+    if (!$c) { return 'le fichier ' . $f . ' est mal écrit (attendu : login = "…" et secret = "…")'; }
+    if (empty($c['login']) || empty($c['secret'])) { return 'il manque login ou secret dans ' . $f; }
+    return '';
+}
+
 /** GET JSON sur l'API Qonto ; lève une exception explicite en cas d'erreur. */
 function qontoGet($cfg, $path) {
     $url = QONTO_BASE . $path;
