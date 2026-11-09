@@ -5,6 +5,7 @@
 // ===================================================================
 error_reporting(E_ALL);
 ini_set('display_errors', '1'); // TODO: '0' en production
+ini_set('serialize_precision', '-1'); // nombres JSON courts (159.37) quel que soit le php.ini
 ini_set('session.cookie_httponly', '1');
 session_start();
 header('Content-Type: text/html; charset=utf-8');
@@ -22,6 +23,15 @@ function h($s) { return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'); }
 function num($v) { return (float) str_replace(array(' ', ','), array('', '.'), (string) $v); }
 /** Catégories véhicule soumises à la règle "1 € camion" en marque blanche. */
 function catCam($c) { return in_array((string) $c, array('TCP', 'CAM3', 'CAM4', 'REM2', 'REM3', 'TRA'), true); }
+/** Rétro d'une ligne garantie + règlement (même calcul que le bordereau et la production). */
+function retroLigne($r, $mb) {
+    $montant = num($r['note3']); if ($r['etat'] === 'A' || $r['etat'] === 'R') { $montant = 0; }
+    $prime_esc = num($r['pa']); $pv = $prime_esc + num($r['r_marge']) + num($r['r_hono']);
+    if ($mb == 1) { $base = catCam($r['categorie']) ? ($pv - 1) : $pv; $rcdr = round(($base - $prime_esc) * 0.4764, 2); $hono = round(num($r['id_lb2']), 2); }
+    else          { $rcdr = round($montant - $pv - num($r['prix_assitance']) - num($r['prix_pj']), 2); $hono = 0; }
+    return max(0, $rcdr) + max(0, $hono);
+}
+require dirname(__FILE__) . '/qonto.php';
 /** Tri concurrence (période) : nb de contrats desc puis CA desc. */
 function concTriPer($x, $y) {
     if ($x['nb'] !== $y['nb']) { return $y['nb'] - $x['nb']; }
@@ -272,7 +282,7 @@ echo '<p class="muted">Sociétés : <strong>' . h(implode(' · ', $societes)) . 
 
 // Vue courante (BI)
 $vue = isset($_GET['vue']) ? $_GET['vue'] : 'bordereau';
-if (!in_array($vue, array('bordereau', 'production', 'concurrence', 'devis', 'renouvellements'), true)) { $vue = 'bordereau'; }
+if (!in_array($vue, array('bordereau', 'production', 'concurrence', 'depenses', 'devis', 'renouvellements'), true)) { $vue = 'bordereau'; }
 $annee = (isset($_GET['annee']) && preg_match('/^\d{4}$/', $_GET['annee'])) ? (int) $_GET['annee'] : (int) date('Y');
 $moisSel = (isset($_GET['mois']) && preg_match('/^(1[0-2]|[1-9])$/', $_GET['mois'])) ? (int) $_GET['mois'] : (int) date('n');
 
@@ -301,6 +311,7 @@ echo '<div class="nav">'
    . '<a href="?vue=concurrence"' . ($vue === 'concurrence' ? ' class="on"' : '') . '>Concurrence</a>'
    . '<a href="?vue=devis"' . ($vue === 'devis' ? ' class="on"' : '') . '>Devis</a>'
    . '<a href="?vue=renouvellements"' . ($vue === 'renouvellements' ? ' class="on"' : '') . '>Renouvellements</a>'
+   . '<a href="?vue=depenses"' . ($vue === 'depenses' ? ' class="on"' : '') . '>Dépenses</a>'
    . '</div>';
 
 // Formulaire de filtres commun (période + société), + état/tri pour le bordereau
@@ -308,7 +319,7 @@ $labelPeriode = ($vue === 'renouvellements') ? 'Échéance entre' : 'Période';
 ?>
 <form class="filtres" method="get">
     <input type="hidden" name="vue" value="<?php echo h($vue); ?>">
-    <?php if ($vue === 'production' || $vue === 'concurrence'): ?>
+    <?php if ($vue === 'production' || $vue === 'concurrence' || $vue === 'depenses'): ?>
         Année :
         <select name="annee">
             <?php for ($y = (int) date('Y'); $y >= 2020; $y--): ?>
@@ -351,7 +362,7 @@ $labelPeriode = ($vue === 'renouvellements') ? 'Échéance entre' : 'Période';
         <a href="<?php echo h($mkRange($lundi, $today)); ?>" style="<?php echo $styleBtnJour($actif === 'sem'); ?>">Cette semaine</a>
         <a href="<?php echo h($mkRange($moisDeb, $moisFin)); ?>" style="<?php echo $styleBtnJour($actif === 'mois'); ?>">Ce mois-ci</a>
     <?php endif; ?>
-    <?php if ($vue !== 'concurrence'): ?>
+    <?php if ($vue !== 'concurrence' && $vue !== 'depenses'): ?>
     &nbsp; Société :
     <select name="soc">
         <option value="TOUTES"<?php echo $soc_filtre === 'TOUTES' ? ' selected' : ''; ?>>Toutes</option>
@@ -939,6 +950,222 @@ if ($vue === 'concurrence') {
     })();
     </script>
     <?php endif; ?>
+    </body></html>
+    <?php
+    exit;
+}
+
+// =================================================================
+//  VUE DÉPENSES (Qonto, lecture seule) comparées à la rétro JLASSURE
+// =================================================================
+if ($vue === 'depenses') {
+    $moisLbl = array('Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc');
+    $cfgQ = qontoConfig();
+    if ($cfgQ === null) {
+        $fq = qontoConfigFile(); $proprio = get_current_user();
+        ?>
+        <div class="box"><strong>Connexion Qonto à configurer</strong>
+            <p>Crée le fichier <code><?php echo h($fq); ?></code> : il est hors du site, donc invisible depuis le web. Sur le serveur :</p>
+            <pre>read -s -p "Clé secrète Qonto : " K; echo
+printf 'login = "mcj-courtage-4402"\nsecret = "%s"\n' "$K" > <?php echo h($fq); ?>; unset K
+chown <?php echo h($proprio . ':' . $proprio . ' ' . $fq); ?>; chmod 600 <?php echo h($fq); ?></pre>
+            <p class="muted">Identifiant et clé : Qonto → Paramètres → Intégrations et partenariats → Clé API (lecture seule, aucun virement possible).</p>
+        </div>
+        </body></html>
+        <?php
+        exit;
+    }
+
+    $refresh = isset($_GET['rafraichir']);
+    $anDeb = sprintf('%04d-01-01', $annee);
+    $anFin = min(sprintf('%04d-12-31', $annee), date('Y-m-d'));
+    $erreurQ = ''; $tx = array(); $soldes = 0.0; $nbComptes = 0;
+    try {
+        $org = qontoOrganisation($cfgQ, $refresh);
+        foreach ($org['comptes'] as $c) { $soldes += $c['solde']; }
+        $nbComptes = count($org['comptes']);
+        $tx = qontoTransactions($cfgQ, $org, $anDeb, $anFin, $refresh);
+        $finP = min($date_fin, date('Y-m-d'));
+        if ($date_deb < $anDeb || $finP > $anFin) { // période hors de l'année affichée : chargée à part
+            foreach (qontoTransactions($cfgQ, $org, $date_deb, $finP, $refresh) as $t) {
+                if ($t['date'] < $anDeb || $t['date'] > $anFin) { $tx[] = $t; }
+            }
+        }
+    } catch (Exception $e) { $erreurQ = $e->getMessage(); }
+
+    if ($erreurQ !== '') {
+        echo '<div class="box"><p class="no">✗ Lecture Qonto impossible</p><pre>' . h($erreurQ) . '</pre>'
+           . '<p class="muted">Un « Invalid credentials » ou « invalid authorization header » vient de <code>' . h(qontoConfigFile())
+           . '</code> : vérifier login et secret (copiés depuis Qonto, sans espace).</p></div></body></html>';
+        exit;
+    }
+
+    // Rétro JLASSURE (même calcul que la Production : date de souscription, contrats avec num_contrat).
+    $retroRows = array();
+    if ($ids) {
+        $in = implode(',', array_fill(0, count($ids), '?'));
+        $st = $pdo->prepare("SELECT g.id AS gid, g.id_app, DATE(g.date_demande) AS d, g.prix_assitance, g.prix_pj, g.id_lb2,
+                                    r.note3, r.pa, r.marge AS r_marge, r.honoraire AS r_hono, r.etat, v.categorie AS categorie
+                             FROM jl_garantie g
+                             JOIN jl_reglement r ON r.id_garantie = g.id
+                             LEFT JOIN jl_vehicule v ON v.id = g.id_vehi
+                             WHERE g.id_app IN ($in) AND g.num_contrat <> '' AND DATE(g.date_demande) BETWEEN ? AND ?");
+        $p = $ids; $p[] = min($anDeb, $date_deb); $p[] = max(sprintf('%04d-12-31', $annee), $date_fin);
+        $st->execute($p);
+        foreach ($st->fetchAll() as $r) {
+            $mb = isset($apMap[(int) $r['id_app']]) ? $apMap[(int) $r['id_app']]['mb'] : 0;
+            $retroRows[] = array('date' => $r['d'], 'gid' => (int) $r['gid'], 'retro' => retroLigne($r, $mb));
+        }
+    }
+
+    $ag = qontoAgreger($tx, $retroRows, $annee, $date_deb, $date_fin);
+    $per = $ag['per'];
+
+    if ($EXPORT === 'csv') {
+        $csv = array(array('Date', 'Sens', 'Tiers', 'Categorie', 'Type', 'Compte', 'Montant', 'Justificatif', 'Virement interne', 'Note'));
+        foreach ($ag['export'] as $t) {
+            $csv[] = array($t['date'], $t['sens'] === 'debit' ? 'Depense' : 'Encaissement', $t['tiers'], $t['categorie'],
+                           qontoTypeLibelle($t['type']), $t['compte'], ($t['sens'] === 'debit' ? '-' : '') . number_format($t['montant'], 2, ',', ''),
+                           $t['justif'] ? 'oui' : 'non', $t['interne'] ? 'oui' : '', $t['note']);
+        }
+        csvOut('depenses_' . $date_deb . '_' . $date_fin . '.csv', $csv);
+    }
+
+    $marge = $per['retro'] - $per['dep'];
+    $coutContrat = $per['nbc'] > 0 ? $per['dep'] / $per['nbc'] : null;
+    $maxMois = ($annee === (int) date('Y')) ? (int) date('n') : 12;
+    $cDep = array(); $cRetro = array(); $cMarge = array(); $cLbl = array();
+    for ($m = 1; $m <= $maxMois; $m++) {
+        $cLbl[] = $moisLbl[$m - 1];
+        $cDep[] = round($ag['mois'][$m]['dep'], 2);
+        $cRetro[] = round($ag['mois'][$m]['retro'], 2);
+        $cMarge[] = round($ag['mois'][$m]['retro'] - $ag['mois'][$m]['dep'], 2);
+    }
+    $qR = $_GET; unset($qR['export']); $qR['rafraichir'] = 1;
+    ?>
+    <p class="muted">Dépenses lues sur Qonto (lecture seule), comparées à la rétro JLASSURE (même calcul que la Production).
+        Période <strong><?php echo dateFr($date_deb); ?> → <?php echo dateFr($date_fin); ?></strong> ; graphique et tableau mensuel : <strong><?php echo $annee; ?></strong>.
+        Données Qonto du <?php echo date('d/m/Y à H:i', qontoDonneesDu()); ?> · <a href="<?php echo h('?' . http_build_query($qR)); ?>">Rafraîchir</a></p>
+
+    <div class="stats">
+        <div class="stat"><b style="color:#c02b2b"><?php echo euros($per['dep']); ?></b><span>Dépenses (période) · <?php echo $per['nbDep']; ?> opérations</span></div>
+        <div class="stat"><b><?php echo euros($per['retro']); ?></b><span>Rétro JLASSURE (période) · <?php echo $per['nbc']; ?> contrats</span></div>
+        <div class="stat hl"><b style="color:<?php echo $marge < 0 ? '#c02b2b' : '#1a7d49'; ?>"><?php echo euros($marge); ?></b><span>Marge estimée (rétro − dépenses)</span></div>
+        <div class="stat"><b><?php echo $coutContrat === null ? '—' : euros($coutContrat); ?></b><span>Dépenses par contrat</span></div>
+        <div class="stat"><b><?php echo euros($per['enc']); ?></b><span>Encaissements Qonto (période)</span></div>
+        <div class="stat"><b><?php echo euros($soldes); ?></b><span>Solde actuel · <?php echo $nbComptes; ?> compte(s)</span></div>
+    </div>
+    <p class="muted">
+        <?php if ($per['nbInterne']): ?>Virements entre vos comptes exclus : <?php echo $per['nbInterne']; ?> (<?php echo euros($per['interne']); ?>). <?php endif; ?>
+        <?php if ($per['sansJustif']): ?><span style="color:#d98a00"><?php echo $per['sansJustif']; ?> dépense(s) sans justificatif dans Qonto sur la période.</span><?php endif; ?>
+    </p>
+
+    <p><a href="<?php echo h(lienCsv()); ?>" style="display:inline-block;background:#1a7d49;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none">⬇ Exporter les opérations de la période (CSV)</a></p>
+
+    <div style="background:#fff;border:1px solid #e3e8f0;border-radius:8px;padding:14px;margin-top:16px">
+        <strong>Dépenses vs rétro par mois — <?php echo $annee; ?></strong>
+        <div style="height:300px;margin-top:8px"><canvas id="depChart"></canvas></div>
+    </div>
+
+    <div style="overflow:auto;margin-top:16px">
+    <table>
+        <thead><tr><th>Mois</th><th class="num">Dépenses</th><th class="num">Encaissements</th><th class="num">Rétro JLASSURE</th>
+            <th class="num">Marge estimée</th><th class="num">Contrats</th><th class="num">Dépenses / contrat</th></tr></thead>
+        <tbody>
+        <?php $tot = array('dep' => 0, 'enc' => 0, 'retro' => 0, 'nbc' => 0);
+        for ($m = 1; $m <= $maxMois; $m++): $v = $ag['mois'][$m]; $mg = $v['retro'] - $v['dep'];
+            foreach ($tot as $k => $x) { $tot[$k] += $v[$k]; } ?>
+            <tr>
+                <td><?php echo $moisLbl[$m - 1]; ?></td>
+                <td class="num"><?php echo euros($v['dep']); ?></td>
+                <td class="num"><?php echo euros($v['enc']); ?></td>
+                <td class="num"><?php echo euros($v['retro']); ?></td>
+                <td class="num" style="color:<?php echo $mg < 0 ? '#c02b2b' : '#1a7d49'; ?>"><?php echo euros($mg); ?></td>
+                <td class="num"><?php echo $v['nbc']; ?></td>
+                <td class="num"><?php echo $v['nbc'] ? euros($v['dep'] / $v['nbc']) : '—'; ?></td>
+            </tr>
+        <?php endfor; $mgT = $tot['retro'] - $tot['dep']; ?>
+            <tr style="font-weight:600;background:#f7f9fd">
+                <td>Total</td>
+                <td class="num"><?php echo euros($tot['dep']); ?></td>
+                <td class="num"><?php echo euros($tot['enc']); ?></td>
+                <td class="num"><?php echo euros($tot['retro']); ?></td>
+                <td class="num" style="color:<?php echo $mgT < 0 ? '#c02b2b' : '#1a7d49'; ?>"><?php echo euros($mgT); ?></td>
+                <td class="num"><?php echo $tot['nbc']; ?></td>
+                <td class="num"><?php echo $tot['nbc'] ? euros($tot['dep'] / $tot['nbc']) : '—'; ?></td>
+            </tr>
+        </tbody>
+    </table>
+    </div>
+
+    <div style="display:flex;flex-wrap:wrap;gap:20px;margin-top:16px">
+        <div style="flex:1 1 420px;min-width:320px;overflow:auto">
+            <strong>Dépenses par catégorie — période</strong>
+            <table>
+                <thead><tr><th>Catégorie</th><th class="num">Montant</th><th class="num">Part</th><th class="num">Opérations</th></tr></thead>
+                <tbody>
+                <?php foreach ($ag['cats'] as $nom => $c): ?>
+                    <tr><td><?php echo h($nom); ?></td><td class="num"><?php echo euros($c['montant']); ?></td>
+                        <td class="num"><?php echo $per['dep'] > 0 ? round($c['montant'] / $per['dep'] * 100, 1) : 0; ?> %</td><td class="num"><?php echo $c['nb']; ?></td></tr>
+                <?php endforeach; ?>
+                <?php if (!$ag['cats']): ?><tr><td colspan="4" class="muted">Aucune dépense sur la période.</td></tr><?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+        <div style="flex:1 1 420px;min-width:320px;overflow:auto">
+            <strong>Top 10 fournisseurs — période</strong>
+            <table>
+                <thead><tr><th>Fournisseur / bénéficiaire</th><th class="num">Montant</th><th class="num">Part</th><th class="num">Opérations</th></tr></thead>
+                <tbody>
+                <?php foreach ($ag['tiers'] as $nom => $c): ?>
+                    <tr><td><?php echo h($nom); ?></td><td class="num"><?php echo euros($c['montant']); ?></td>
+                        <td class="num"><?php echo $per['dep'] > 0 ? round($c['montant'] / $per['dep'] * 100, 1) : 0; ?> %</td><td class="num"><?php echo $c['nb']; ?></td></tr>
+                <?php endforeach; ?>
+                <?php if (!$ag['tiers']): ?><tr><td colspan="4" class="muted">Aucune dépense sur la période.</td></tr><?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <h2>Dépenses de la période</h2>
+    <div style="overflow:auto">
+    <table>
+        <thead><tr><th>Date</th><th>Fournisseur / bénéficiaire</th><th>Catégorie</th><th>Type</th><th>Compte</th><th class="num">Montant</th><th class="ctr">Justificatif</th><th>Note</th></tr></thead>
+        <tbody>
+        <?php foreach (array_slice($ag['lignes'], 0, 300) as $t): ?>
+            <tr>
+                <td><?php echo dateFr($t['date']); ?></td>
+                <td><?php echo h($t['tiers']); ?></td>
+                <td><?php echo h($t['categorie']); ?></td>
+                <td><?php echo h(qontoTypeLibelle($t['type'])); ?></td>
+                <td><?php echo h($t['compte']); ?></td>
+                <td class="num"><?php echo euros($t['montant']); ?></td>
+                <td class="ctr"><?php echo $t['justif'] ? '<span class="ok">✓</span>' : '<span style="color:#d98a00">manquant</span>'; ?></td>
+                <td style="white-space:normal;max-width:320px"><?php echo h($t['note']); ?></td>
+            </tr>
+        <?php endforeach; ?>
+        <?php if (!$ag['lignes']): ?><tr><td colspan="8" class="muted">Aucune dépense sur la période.</td></tr><?php endif; ?>
+        </tbody>
+    </table>
+    <?php if (count($ag['lignes']) > 300): ?><p class="muted">300 premières lignes affichées sur <?php echo count($ag['lignes']); ?> : l'export CSV contient tout.</p><?php endif; ?>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script>
+    (function () {
+        var eur = function (v) { return v.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; };
+        new Chart(document.getElementById('depChart'), {
+            type: 'bar',
+            data: { labels: <?php echo json_encode($cLbl); ?>, datasets: [
+                { label: 'Dépenses', data: <?php echo json_encode($cDep); ?>, backgroundColor: '#e05a5a' },
+                { label: 'Rétro JLASSURE', data: <?php echo json_encode($cRetro); ?>, backgroundColor: '#1f5eff' },
+                { type: 'line', label: 'Marge estimée', data: <?php echo json_encode($cMarge); ?>, borderColor: '#1a7d49', backgroundColor: '#1a7d49', tension: 0.2 } ] },
+            options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+                plugins: { tooltip: { callbacks: { label: function (c) { return c.dataset.label + ' : ' + eur(c.parsed.y); } } } },
+                scales: { y: { ticks: { callback: function (v) { return v.toLocaleString('fr-FR') + ' €'; } } } } }
+        });
+    })();
+    </script>
     </body></html>
     <?php
     exit;
