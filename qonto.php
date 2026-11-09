@@ -41,19 +41,43 @@ function qontoProbleme() {
     return '';
 }
 
+/**
+ * Adresse IPv4 d'un hôte via le résolveur du système ('' si introuvable).
+ * Sur certains hébergements (cPanel), le curl du PHP web résout les noms autrement que le système
+ * et reste bloqué ("Resolving timed out") : on lui fournit donc l'adresse trouvée par le système.
+ */
+function qontoResoudre($host) {
+    static $cache = array();
+    if (!isset($cache[$host])) {
+        $ip = @gethostbyname($host);
+        $cache[$host] = ($ip !== $host && filter_var($ip, FILTER_VALIDATE_IP)) ? $ip : '';
+    }
+    return $cache[$host];
+}
+
 /** GET JSON sur l'API Qonto ; lève une exception explicite en cas d'erreur. */
 function qontoGet($cfg, $path) {
     $url = QONTO_BASE . $path;
     $hdr = array('Authorization: ' . $cfg['login'] . ':' . $cfg['secret'], 'Accept: application/json');
     if (function_exists('curl_init')) {
+        $u = parse_url(QONTO_BASE);
+        $host = $u['host'];
+        $port = isset($u['port']) ? (int) $u['port'] : ($u['scheme'] === 'https' ? 443 : 80);
+        $opts = array(CURLOPT_RETURNTRANSFER => true, CURLOPT_HTTPHEADER => $hdr,
+                      CURLOPT_TIMEOUT => 30, CURLOPT_CONNECTTIMEOUT => 10, CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4);
+        $ip = filter_var($host, FILTER_VALIDATE_IP) ? '' : qontoResoudre($host);
+        if ($ip !== '') { $opts[CURLOPT_RESOLVE] = array($host . ':' . $port . ':' . $ip); } // le certificat reste vérifié sur le nom
         $ch = curl_init($url);
-        curl_setopt_array($ch, array(CURLOPT_RETURNTRANSFER => true, CURLOPT_HTTPHEADER => $hdr,
-                                     CURLOPT_TIMEOUT => 30, CURLOPT_CONNECTTIMEOUT => 10));
+        curl_setopt_array($ch, $opts);
         $body = curl_exec($ch);
         $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $err = curl_error($ch);
         curl_close($ch);
-        if ($body === false) { throw new Exception('Qonto injoignable : ' . $err); }
+        if ($body === false) {
+            $diag = $ip !== '' ? 'le système trouve pourtant l\'adresse ' . $ip . ' (pare-feu sortant ?)'
+                               : 'le serveur ne trouve pas l\'adresse de ' . $host . ' (DNS du serveur)';
+            throw new Exception('Qonto injoignable : ' . $err . ' — ' . $diag);
+        }
     } else {
         $ctx = stream_context_create(array('http' => array('method' => 'GET', 'header' => implode("\r\n", $hdr),
                                                            'timeout' => 30, 'ignore_errors' => true)));
