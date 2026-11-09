@@ -991,7 +991,7 @@ if ($vue === 'previsionnel') {
     $msgQonto = '';
     $cfgQ = qontoConfig();
     if ($cfgQ === null) {
-        $msgQonto = 'Qonto n\'est pas connecté (voir l\'onglet Dépenses) : indique tes dépenses mensuelles estimées dans les réglages.';
+        $msgQonto = 'Qonto n\'est pas connecté : ' . qontoProbleme() . ' (voir l\'onglet Dépenses). En attendant, indique tes dépenses mensuelles estimées dans les réglages.';
     } else {
         try {
             $org = qontoOrganisation($cfgQ, false);
@@ -1236,6 +1236,7 @@ if ($vue === 'depenses') {
         $fq = qontoConfigFile(); $proprio = get_current_user();
         ?>
         <div class="box"><strong>Connexion Qonto à configurer</strong>
+            <p class="no">Problème détecté : <?php echo h(qontoProbleme()); ?>.</p>
             <p>Crée le fichier <code><?php echo h($fq); ?></code> : il est hors du site, donc invisible depuis le web. Sur le serveur :</p>
             <pre>read -s -p "Clé secrète Qonto : " K; echo
 printf 'login = "mcj-courtage-4402"\nsecret = "%s"\n' "$K" > <?php echo h($fq); ?>; unset K
