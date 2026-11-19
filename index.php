@@ -967,17 +967,28 @@ if ($vue === 'concurrence') {
 // =================================================================
 if ($vue === 'activite') {
     $now = time();
-    $stamps = array();
+    // Horodatages des contrats validés (num_contrat + statut V) depuis une date donnée.
+    $horodatages = function ($sql, $params) use ($pdo) {
+        $st = $pdo->prepare($sql); $st->execute($params); $out = array();
+        foreach ($st->fetchAll() as $r) { $t = strtotime($r['d']); if ($t) { $out[] = $t; } }
+        return $out;
+    };
+    $debut = activiteDebut($now);
+    $mcj = array();
     if ($idsUsed) {
         $in = implode(',', array_fill(0, count($idsUsed), '?'));
-        $st = $pdo->prepare("SELECT g.date_demande AS d FROM jl_garantie g
-                             WHERE g.id_app IN ($in) AND g.num_contrat <> '' AND g.status = 'V' AND g.date_demande >= ?");
-        $p = $idsUsed; $p[] = activiteDebut($now);
-        $st->execute($p);
-        foreach ($st->fetchAll() as $r) { $t = strtotime($r['d']); if ($t) { $stamps[] = $t; } }
+        $p = $idsUsed; $p[] = $debut;
+        $mcj = $horodatages("SELECT g.date_demande AS d FROM jl_garantie g
+                             WHERE g.id_app IN ($in) AND g.num_contrat <> '' AND g.status = 'V' AND g.date_demande >= ?", $p);
     }
-    $A = activiteCalcul($stamps, $now);
-    $P = $A['periodes'];
+    // Ensemble des courtiers iframeurs = groupe GP (MCJ inclus).
+    $gp = $horodatages("SELECT g.date_demande AS d FROM jl_garantie g INNER JOIN jl_app a ON a.id = g.id_app
+                        WHERE a.lettrage = 'GP' AND g.num_contrat <> '' AND g.status = 'V' AND g.date_demande >= ?", array($debut));
+    $A = activiteCalcul($mcj, $now);
+    $G = activiteCalcul($gp, $now);
+    $P = $A['periodes']; $PG = $G['periodes'];
+    $mcjN1 = $P['annee']['n1Total'] > 0; // MCJ a-t-il un historique l'an dernier ?
+
     $jSem = array(1 => 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche');
     $mNom = array(1 => 'janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre');
     $jourTxt = function ($ts) use ($jSem, $mNom) { return $jSem[(int) date('N', $ts)] . ' ' . (int) date('j', $ts) . ' ' . $mNom[(int) date('n', $ts)]; };
@@ -988,19 +999,23 @@ if ($vue === 'activite') {
         $e = round(($v - $ref) / $ref * 100);
         return '<span class="ac-evol ' . ($e >= 0 ? 'ac-bon' : 'ac-mauvais') . '">' . ($e >= 0 ? '▲ +' : '▼ ') . $e . ' % ' . h($lib) . '</span>';
     };
+    $part = function ($a, $b) { return $b > 0 ? number_format($a / $b * 100, 1, ',', ' ') . ' %' : '—'; };
     $heure = date('G\hi', $now);
-    $an1 = (int) date('Y', $now) - 1;
-    $cartes = array(
-        array('Aujourd\'hui', ucfirst($jourTxt($now)), $P['jour'], 'à ' . $heure,
-              'Un an avant (' . $jourTxt($P['jour']['n1Date']) . ' ' . $an1 . ')', 'à la même heure', 'sur la journée'),
-        array('Cette semaine', 'du lundi au dimanche', $P['semaine'], 'à ce jour',
-              'Même semaine en ' . $an1, 'au même moment', 'sur la semaine'),
-        array('Ce mois-ci', ucfirst($mNom[(int) date('n', $now)]) . ' ' . date('Y', $now), $P['mois'], 'à ce jour',
-              ucfirst($mNom[(int) date('n', $now)]) . ' ' . $an1, 'au même moment', 'sur le mois'),
-        array('Depuis le 1er janvier', 'année ' . date('Y', $now), $P['annee'], 'à ce jour',
-              'Année ' . $an1, 'à la même date', 'sur l\'année'),
+    $an = (int) date('Y', $now); $an1 = $an - 1;
+    $moisCourant = $mNom[(int) date('n', $now)];
+    $cles = array('jour', 'semaine', 'mois', 'annee');
+    $titres = array(
+        'jour'    => array('Aujourd\'hui', ucfirst($jourTxt($now)), 'à ' . $heure, 'à la même heure'),
+        'semaine' => array('Cette semaine', 'du lundi au dimanche', 'à ce jour', 'au même moment'),
+        'mois'    => array('Ce mois-ci', ucfirst($moisCourant) . ' ' . $an, 'à ce jour', 'au même moment'),
+        'annee'   => array('Depuis le 1er janvier', 'année ' . $an, 'à ce jour', 'à la même date'),
     );
-    $refNom = $jSem[(int) date('N', $now)] . 's';
+    // Part de MCJ dans les iframeurs, mois par mois de l'année en cours.
+    $partLbl = array(); $partVal = array(); $moisCourt = array('Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc');
+    for ($m = 1; $m <= (int) date('n', $now); $m++) {
+        $partLbl[] = $moisCourt[$m - 1];
+        $partVal[] = $G['parMoisN'][$m] > 0 ? round($A['parMoisN'][$m] / $G['parMoisN'][$m] * 100, 2) : 0;
+    }
     ?>
     <style>
     .ac h2{border:0;margin:0;padding:0;font-size:26px;letter-spacing:-.02em}
@@ -1010,17 +1025,20 @@ if ($vue === 'activite') {
     .ac-carte{background:#fff;border:1px solid rgba(11,11,11,.08);border-radius:16px;padding:18px 20px;box-shadow:0 1px 2px rgba(16,24,40,.04),0 4px 14px rgba(16,24,40,.04)}
     .ac-carte.ac-une{background:linear-gradient(135deg,#0d2350 0%,#173f9e 60%,#1f5eff 100%);color:#fff;border:0;box-shadow:0 12px 30px rgba(23,63,158,.25)}
     .ac-lib{font-size:14px;font-weight:650} .ac-date{font-size:12px;color:#898781;margin-top:2px}
-    .ac-une .ac-date,.ac-une .ac-n1,.ac-une .ac-ligne{color:rgba(255,255,255,.85)}
+    .ac-une .ac-date,.ac-une .ac-n1,.ac-une .ac-ligne,.ac-une .ac-gp{color:rgba(255,255,255,.88)}
     .ac-val{font-size:40px;font-weight:700;letter-spacing:-.03em;line-height:1.1;margin:12px 0 2px}
     .ac-val small{font-size:14px;font-weight:500;letter-spacing:0;opacity:.75}
-    .ac-ligne{font-size:14px;color:#0b0b0b;margin:4px 0 10px}
-    .ac-n1{font-size:12px;color:#52514e;line-height:1.6;border-top:1px solid rgba(11,11,11,.08);padding-top:10px;margin-top:10px}
-    .ac-une .ac-n1{border-top-color:rgba(255,255,255,.2)}
-    .ac-evol{display:inline-block;font-size:12px;font-weight:650;padding:3px 10px;border-radius:999px;background:#f3f5f9;margin-top:8px}
+    .ac-ligne{font-size:14px;color:#0b0b0b;margin:4px 0 8px}
+    .ac-gp,.ac-n1{font-size:12px;color:#52514e;line-height:1.6;border-top:1px solid rgba(11,11,11,.08);padding-top:10px;margin-top:10px}
+    .ac-une .ac-gp,.ac-une .ac-n1{border-top-color:rgba(255,255,255,.2)}
+    .ac-gp b,.ac-n1 b{font-weight:650}
+    .ac-part{display:flex;justify-content:space-between;align-items:baseline;margin-top:6px;font-size:13px}
+    .ac-part strong{font-size:16px}
+    .ac-evol{display:inline-block;font-size:12px;font-weight:650;padding:3px 10px;border-radius:999px;background:#f3f5f9;margin-top:6px}
     .ac-une .ac-evol{background:#fff}
     .ac-bon{color:#006300} .ac-mauvais{color:#d03b3b}
     .ac-graphes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:16px}
-    .ac-graph{position:relative;height:300px;margin-top:12px}
+    .ac-graph{position:relative;height:280px;margin-top:12px}
     .ac-pied{margin-top:14px;font-size:12px;color:#898781}
     @media (max-width:1100px){.ac-cartes{grid-template-columns:repeat(2,minmax(0,1fr))}.ac-graphes{grid-template-columns:minmax(0,1fr)}}
     @media (max-width:600px){.ac-cartes{grid-template-columns:minmax(0,1fr)}}
@@ -1029,25 +1047,32 @@ if ($vue === 'activite') {
     <div class="ac">
         <div class="ac-tete">
             <h2>Activité</h2>
-            <p>Contrats validés (statut V), à la date de souscription · mis à jour à <?php echo $heure; ?>, actualisation automatique toutes les 5 minutes</p>
+            <p>MCJ COURTAGE comparé à l'ensemble des courtiers iframeurs (groupe GP) · contrats validés (statut V), à la date de souscription ·
+               mis à jour à <?php echo $heure; ?>, actualisation automatique toutes les 5 minutes</p>
         </div>
 
         <div class="ac-cartes">
-        <?php foreach ($cartes as $i => $c): $v = $c[2]; $annee = $v['prevision'] === null; ?>
+        <?php foreach ($cles as $i => $k): $v = $P[$k]; $g = $PG[$k]; $t = $titres[$k]; $annee = $k === 'annee'; ?>
             <div class="ac-carte<?php echo $i === 0 ? ' ac-une' : ''; ?>">
-                <div class="ac-lib"><?php echo h($c[0]); ?></div>
-                <div class="ac-date"><?php echo h($c[1]); ?></div>
+                <div class="ac-lib"><?php echo h($t[0]); ?></div>
+                <div class="ac-date"><?php echo h($t[1]); ?></div>
                 <?php if ($annee): ?>
-                    <div class="ac-val"><?php echo $nbTxt($v['reel']); ?> <small>contrat<?php echo $s($v['reel']); ?></small></div>
-                    <div class="ac-ligne">réalisé<?php echo $s($v['reel']); ?> <?php echo h($c[3]); ?></div>
-                    <?php echo $evol($v['reel'], $v['n1Moment'], 'vs ' . $an1 . ' à la même date'); ?>
+                    <div class="ac-val"><?php echo $nbTxt($v['reel']); ?> <small>contrat<?php echo $s($v['reel']); ?> MCJ</small></div>
+                    <div class="ac-ligne">réalisé<?php echo $s($v['reel']); ?> <?php echo h($t[2]); ?></div>
                 <?php else: ?>
-                    <div class="ac-val"><?php echo $nbTxt($v['prevision']); ?> <small>contrat<?php echo $s($v['prevision']); ?> prévu<?php echo $s($v['prevision']); ?></small></div>
-                    <div class="ac-ligne"><strong><?php echo $nbTxt($v['reel']); ?></strong> réalisé<?php echo $s($v['reel']); ?> <?php echo h($c[3]); ?></div>
-                    <?php echo $evol($v['prevision'], $v['n1Total'], 'vs ' . $an1); ?>
+                    <div class="ac-val"><?php echo $nbTxt($v['prevision']); ?> <small>contrat<?php echo $s($v['prevision']); ?> MCJ prévu<?php echo $s($v['prevision']); ?></small></div>
+                    <div class="ac-ligne"><strong><?php echo $nbTxt($v['reel']); ?></strong> réalisé<?php echo $s($v['reel']); ?> <?php echo h($t[2]); ?></div>
                 <?php endif; ?>
-                <div class="ac-n1"><?php echo h($c[4]); ?> :<br>
-                    <strong><?php echo $nbTxt($v['n1Moment']); ?></strong> <?php echo h($c[5]); ?> · <strong><?php echo $nbTxt($v['n1Total']); ?></strong> <?php echo h($c[6]); ?></div>
+                <?php if ($mcjN1): ?>
+                    <?php echo $evol($annee ? $v['reel'] : $v['prevision'], $annee ? $v['n1Moment'] : $v['n1Total'], 'vs MCJ ' . $an1); ?>
+                <?php endif; ?>
+                <div class="ac-gp">
+                    Tous les iframeurs : <b><?php echo $nbTxt($g['reel']); ?></b> <?php echo h($t[2]); ?>
+                    <?php if (!$annee): ?> · <b><?php echo $nbTxt($g['prevision']); ?></b> prévus<?php endif; ?><br>
+                    Il y a un an : <b><?php echo $nbTxt($g['n1Moment']); ?></b> <?php echo h($t[3]); ?><br>
+                    <?php echo $evol($g['reel'], $g['n1Moment'], 'marché vs ' . $an1); ?>
+                    <div class="ac-part"><span>Part de MCJ</span><strong><?php echo $part($v['reel'], $g['reel']); ?></strong></div>
+                </div>
             </div>
         <?php endforeach; ?>
         </div>
@@ -1055,29 +1080,41 @@ if ($vue === 'activite') {
         <div class="ac-graphes">
             <?php if ($A['avecHeure']): ?>
             <section class="ac-carte">
-                <h3>Aujourd'hui, heure par heure</h3>
+                <h3>MCJ aujourd'hui, heure par heure</h3>
                 <p class="ac-sous">Contrats cumulés depuis minuit</p>
-                <div class="ac-graph"><canvas id="acHeures" role="img" aria-label="Contrats cumulés aujourd'hui heure par heure, comparés à un jour habituel et à l'an dernier"></canvas></div>
+                <div class="ac-graph"><canvas id="acHeures" role="img" aria-label="Contrats MCJ cumulés aujourd'hui heure par heure, comparés à un jour habituel"></canvas></div>
             </section>
             <?php endif; ?>
             <section class="ac-carte">
-                <h3><?php echo h(ucfirst($mNom[(int) date('n', $now)])); ?>, jour par jour</h3>
+                <h3>MCJ en <?php echo h($moisCourant); ?>, jour par jour</h3>
                 <p class="ac-sous">Contrats cumulés depuis le 1er du mois</p>
-                <div class="ac-graph"><canvas id="acMois" role="img" aria-label="Contrats cumulés du mois, réel puis prévision, comparés au même mois l'an dernier"></canvas></div>
+                <div class="ac-graph"><canvas id="acMois" role="img" aria-label="Contrats MCJ cumulés du mois, réel puis prévision"></canvas></div>
+            </section>
+            <section class="ac-carte">
+                <h3>Iframeurs GP en <?php echo h($moisCourant); ?> : <?php echo $an; ?> vs <?php echo $an1; ?></h3>
+                <p class="ac-sous">Contrats cumulés de tous les iframeurs, depuis le 1er du mois</p>
+                <div class="ac-graph"><canvas id="acMarche" role="img" aria-label="Contrats cumulés de tous les iframeurs ce mois-ci, comparés au même mois l'an dernier"></canvas></div>
+            </section>
+            <section class="ac-carte">
+                <h3>Part de MCJ dans les iframeurs, mois par mois</h3>
+                <p class="ac-sous">Contrats MCJ ÷ contrats de tous les iframeurs GP · mois en cours en clair</p>
+                <div class="ac-graph"><canvas id="acPart" role="img" aria-label="Part de MCJ dans les contrats des iframeurs, mois par mois"></canvas></div>
             </section>
         </div>
 
-        <p class="ac-pied">Prévision : ce qui est déjà fait + ce qui se fait d'habitude ensuite (moyenne des <?php echo ACT_REF; ?> derniers <?php echo h($refNom); ?> pour aujourd'hui,
-            et des <?php echo ACT_REF; ?> derniers jours identiques pour les jours suivants)<?php echo $A['avecHeure'] ? ', ajusté au rythme de la journée' : ''; ?>.
-            L'an dernier : même jour de la semaine il y a 52 semaines, même mois civil pour le mois et l'année.</p>
+        <p class="ac-pied">Iframeurs : apporteurs du groupe GP (jl_app.lettrage = 'GP'), MCJ inclus.
+            Prévision : ce qui est déjà fait + ce qui se fait d'habitude ensuite (moyenne des <?php echo ACT_REF; ?> mêmes jours de la semaine précédents)<?php echo $A['avecHeure'] ? ', ajustée au rythme de la journée' : ''; ?>.
+            « Il y a un an » : même jour de la semaine il y a 52 semaines (jour, semaine), même mois civil (mois, année).</p>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script>
     (function () {
-        var H = <?php echo json_encode($A['heures']); ?>, M = <?php echo json_encode($A['mois']); ?>;
+        var H = <?php echo json_encode($A['heures']); ?>, M = <?php echo json_encode($A['mois']); ?>, MG = <?php echo json_encode($G['mois']); ?>;
+        var mcjN1 = <?php echo $mcjN1 ? 'true' : 'false'; ?>;
         var BLEU = '#2a78d6', ORANGE = '#eb6834', GRIS = '#a8a69e';
         Chart.defaults.font.family = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+        Chart.defaults.locale = 'fr-FR'; // séparateur de milliers français sur les axes
         Chart.defaults.color = '#898781';
         var tip = { backgroundColor: '#fff', titleColor: '#52514e', bodyColor: '#0b0b0b', borderColor: 'rgba(11,11,11,.12)', borderWidth: 1, padding: 10,
                     filter: function (it) { return it.raw !== null && it.parsed.y !== null; } };
@@ -1087,36 +1124,41 @@ if ($vue === 'activite') {
                      pointRadius: 0, pointHoverRadius: 4, tension: 0.2, spanGaps: false };
         };
         var axeY = { beginAtZero: true, border: { display: false }, grid: { color: '#e1e0d9' }, ticks: { precision: 0 } };
+        var axeX = { grid: { display: false }, border: { color: '#c3c2b7' }, ticks: { autoSkip: true, maxTicksLimit: 16 } };
+        var nombre = function (c) { return ' ' + c.dataset.label + ' : ' + Math.round(c.parsed.y).toLocaleString('fr-FR'); };
+        var options = function (titre) {
+            return { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+                     plugins: { legend: legende, tooltip: Object.assign({}, tip, { callbacks: { title: titre, label: nombre } }) },
+                     scales: { x: axeX, y: axeY } };
+        };
+        var leJour = function (it) { return 'Le ' + it[0].label; };
+
         if (document.getElementById('acHeures')) {
-            new Chart(document.getElementById('acHeures'), {
-                type: 'line',
-                data: { datasets: [
-                    ligne('Aujourd\'hui', H.reel, BLEU, false, 2.5),
-                    ligne('Prévision', H.prevision, BLEU, true),
-                    ligne(<?php echo json_encode(ucfirst($jSem[(int) date('N', $now)]) . ' habituel'); ?>, H.habituel, GRIS),
-                    ligne(<?php echo json_encode('Un an avant'); ?>, H.n1, ORANGE)
-                ] },
-                options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'nearest', axis: 'x', intersect: false },
-                    plugins: { legend: legende, tooltip: Object.assign({}, tip, { callbacks: {
-                        title: function (it) { var x = it[0].parsed.x, h = Math.floor(x), m = Math.round((x - h) * 60); return h + 'h' + (m ? String(m).padStart(2, '0') : ''); },
-                        label: function (c) { return ' ' + c.dataset.label + ' : ' + Math.round(c.parsed.y); } } }) },
-                    scales: { x: { type: 'linear', min: 0, max: 24, grid: { display: false }, border: { color: '#c3c2b7' },
-                                   ticks: { stepSize: 3, callback: function (v) { return v + 'h'; } } }, y: axeY } }
-            });
+            var dsH = [ligne('Aujourd\'hui', H.reel, BLEU, false, 2.5), ligne('Prévision', H.prevision, BLEU, true),
+                       ligne(<?php echo json_encode(ucfirst($jSem[(int) date('N', $now)]) . ' habituel'); ?>, H.habituel, GRIS)];
+            if (mcjN1) { dsH.push(ligne('Un an avant', H.n1, ORANGE)); }
+            var oH = options(function (it) { var x = it[0].parsed.x, h = Math.floor(x), m = Math.round((x - h) * 60); return h + 'h' + (m ? String(m).padStart(2, '0') : ''); });
+            oH.interaction = { mode: 'nearest', axis: 'x', intersect: false };
+            oH.scales.x = { type: 'linear', min: 0, max: 24, grid: { display: false }, border: { color: '#c3c2b7' }, ticks: { stepSize: 3, callback: function (v) { return v + 'h'; } } };
+            new Chart(document.getElementById('acHeures'), { type: 'line', data: { datasets: dsH }, options: oH });
         }
-        new Chart(document.getElementById('acMois'), {
-            type: 'line',
-            data: { labels: M.labels, datasets: [
-                ligne('Réel', M.reel, BLEU, false, 2.5),
-                ligne('Prévision', M.prevision, BLEU, true),
-                ligne(<?php echo json_encode(ucfirst($mNom[(int) date('n', $now)]) . ' ' . $an1); ?>, M.n1, ORANGE)
-            ] },
-            options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-                plugins: { legend: legende, tooltip: Object.assign({}, tip, { callbacks: {
-                    title: function (it) { return 'Le ' + it[0].label; },
-                    label: function (c) { return ' ' + c.dataset.label + ' : ' + Math.round(c.parsed.y); } } }) },
-                scales: { x: { grid: { display: false }, border: { color: '#c3c2b7' }, ticks: { autoSkip: true, maxTicksLimit: 16 } }, y: axeY } }
-        });
+
+        var dsM = [ligne('Réel', M.reel, BLEU, false, 2.5), ligne('Prévision', M.prevision, BLEU, true)];
+        if (mcjN1) { dsM.push(ligne(<?php echo json_encode(ucfirst($moisCourant) . ' ' . $an1); ?>, M.n1, ORANGE)); }
+        new Chart(document.getElementById('acMois'), { type: 'line', data: { labels: M.labels, datasets: dsM }, options: options(leJour) });
+
+        new Chart(document.getElementById('acMarche'), { type: 'line', data: { labels: MG.labels, datasets: [
+            ligne(<?php echo json_encode((string) $an); ?>, MG.reel, BLEU, false, 2.5), ligne('Prévision', MG.prevision, BLEU, true),
+            ligne(<?php echo json_encode((string) $an1); ?>, MG.n1, ORANGE) ] }, options: options(leJour) });
+
+        var parts = <?php echo json_encode($partVal); ?>;
+        var oP = options(null);
+        oP.plugins.legend = { display: false };
+        oP.plugins.tooltip.callbacks = { label: function (c) { return ' Part de MCJ : ' + c.parsed.y.toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' %'; } };
+        oP.scales.y = Object.assign({}, axeY, { ticks: { callback: function (v) { return v.toLocaleString('fr-FR') + ' %'; } } });
+        new Chart(document.getElementById('acPart'), { type: 'bar', data: { labels: <?php echo json_encode($partLbl); ?>, datasets: [{ label: 'Part de MCJ', data: parts,
+            backgroundColor: parts.map(function (v, i) { return i === parts.length - 1 ? BLEU + '66' : BLEU; }), borderRadius: 4, borderSkipped: 'start', maxBarThickness: 24 }] }, options: oP });
+
         // Actualisation automatique toutes les 5 minutes, seulement si l'onglet est visible.
         setInterval(function () { if (!document.hidden) { location.reload(); } }, 300000);
     })();

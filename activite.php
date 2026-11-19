@@ -151,6 +151,14 @@ function activiteCalcul($stamps, $now) {
         else { $moisG['n1'][] = null; }
     }
 
+    // Totaux par mois, année en cours et année précédente (pour les parts de marché).
+    $parMoisN = array_fill(1, 12, 0); $parMoisN1 = array_fill(1, 12, 0);
+    foreach ($jours as $d => $l) {
+        $y = (int) substr($d, 0, 4); $mm = (int) substr($d, 5, 2);
+        if ($y === $an) { $parMoisN[$mm] += count($l); } elseif ($y === $an - 1) { $parMoisN1[$mm] += count($l); }
+    }
+
     return array('periodes' => $periodes, 'avecHeure' => $avecHeure, 'rythme' => $rythme,
-                 'typTotal' => $typTotal, 'refsAuj' => $refAuj, 'heures' => $heures, 'mois' => $moisG);
+                 'typTotal' => $typTotal, 'refsAuj' => $refAuj, 'heures' => $heures, 'mois' => $moisG,
+                 'parMoisN' => $parMoisN, 'parMoisN1' => $parMoisN1);
 }
