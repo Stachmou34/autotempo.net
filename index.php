@@ -32,6 +32,7 @@ function retroLigne($r, $mb) {
     return max(0, $rcdr) + max(0, $hono);
 }
 require dirname(__FILE__) . '/qonto.php';
+require dirname(__FILE__) . '/activite.php';
 /** Tri concurrence (période) : nb de contrats desc puis CA desc. */
 function concTriPer($x, $y) {
     if ($x['nb'] !== $y['nb']) { return $y['nb'] - $x['nb']; }
@@ -282,7 +283,7 @@ echo '<p class="muted">Sociétés : <strong>' . h(implode(' · ', $societes)) . 
 
 // Vue courante (BI)
 $vue = isset($_GET['vue']) ? $_GET['vue'] : 'bordereau';
-if (!in_array($vue, array('bordereau', 'production', 'previsionnel', 'concurrence', 'depenses', 'devis', 'renouvellements'), true)) { $vue = 'bordereau'; }
+if (!in_array($vue, array('bordereau', 'production', 'activite', 'previsionnel', 'concurrence', 'depenses', 'devis', 'renouvellements'), true)) { $vue = 'bordereau'; }
 $annee = (isset($_GET['annee']) && preg_match('/^\d{4}$/', $_GET['annee'])) ? (int) $_GET['annee'] : (int) date('Y');
 $moisSel = (isset($_GET['mois']) && preg_match('/^(1[0-2]|[1-9])$/', $_GET['mois'])) ? (int) $_GET['mois'] : (int) date('n');
 
@@ -308,6 +309,7 @@ if ($soc_filtre !== 'TOUTES') {
 echo '<div class="nav">'
    . '<a href="?vue=bordereau"' . ($vue === 'bordereau' ? ' class="on"' : '') . '>Bordereau rétrocession</a>'
    . '<a href="?vue=production"' . ($vue === 'production' ? ' class="on"' : '') . '>Production</a>'
+   . '<a href="?vue=activite"' . ($vue === 'activite' ? ' class="on"' : '') . '>Activité</a>'
    . '<a href="?vue=previsionnel"' . ($vue === 'previsionnel' ? ' class="on"' : '') . '>Prévisionnel</a>'
    . '<a href="?vue=concurrence"' . ($vue === 'concurrence' ? ' class="on"' : '') . '>Concurrence</a>'
    . '<a href="?vue=devis"' . ($vue === 'devis' ? ' class="on"' : '') . '>Devis</a>'
@@ -338,7 +340,7 @@ $labelPeriode = ($vue === 'renouvellements') ? 'Échéance entre' : 'Période';
         </select>
         <?php endif; ?>
     <?php endif; ?>
-    <?php if ($vue !== 'production'): ?>
+    <?php if ($vue !== 'production' && $vue !== 'activite'): ?>
         <?php echo $labelPeriode; ?> : <input type="date" name="date_deb" value="<?php echo h($date_deb); ?>">
         → <input type="date" name="date_fin" value="<?php echo h($date_fin); ?>">
         <?php
@@ -953,6 +955,172 @@ if ($vue === 'concurrence') {
     })();
     </script>
     <?php endif; ?>
+    </body></html>
+    <?php
+    exit;
+}
+
+// =================================================================
+//  VUE ACTIVITÉ : contrats du jour / semaine / mois / année,
+//  prévision de fin de période et comparaison avec l'an dernier
+//  (calculs dans activite.php)
+// =================================================================
+if ($vue === 'activite') {
+    $now = time();
+    $stamps = array();
+    if ($idsUsed) {
+        $in = implode(',', array_fill(0, count($idsUsed), '?'));
+        $st = $pdo->prepare("SELECT g.date_demande AS d FROM jl_garantie g
+                             WHERE g.id_app IN ($in) AND g.num_contrat <> '' AND g.status = 'V' AND g.date_demande >= ?");
+        $p = $idsUsed; $p[] = activiteDebut($now);
+        $st->execute($p);
+        foreach ($st->fetchAll() as $r) { $t = strtotime($r['d']); if ($t) { $stamps[] = $t; } }
+    }
+    $A = activiteCalcul($stamps, $now);
+    $P = $A['periodes'];
+    $jSem = array(1 => 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche');
+    $mNom = array(1 => 'janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre');
+    $jourTxt = function ($ts) use ($jSem, $mNom) { return $jSem[(int) date('N', $ts)] . ' ' . (int) date('j', $ts) . ' ' . $mNom[(int) date('n', $ts)]; };
+    $nbTxt = function ($v) { return number_format(round($v), 0, ',', ' '); };
+    $s = function ($v) { return round($v) > 1 ? 's' : ''; }; // accord du pluriel
+    $evol = function ($v, $ref, $lib) {
+        if (!$ref) { return ''; }
+        $e = round(($v - $ref) / $ref * 100);
+        return '<span class="ac-evol ' . ($e >= 0 ? 'ac-bon' : 'ac-mauvais') . '">' . ($e >= 0 ? '▲ +' : '▼ ') . $e . ' % ' . h($lib) . '</span>';
+    };
+    $heure = date('G\hi', $now);
+    $an1 = (int) date('Y', $now) - 1;
+    $cartes = array(
+        array('Aujourd\'hui', ucfirst($jourTxt($now)), $P['jour'], 'à ' . $heure,
+              'Un an avant (' . $jourTxt($P['jour']['n1Date']) . ' ' . $an1 . ')', 'à la même heure', 'sur la journée'),
+        array('Cette semaine', 'du lundi au dimanche', $P['semaine'], 'à ce jour',
+              'Même semaine en ' . $an1, 'au même moment', 'sur la semaine'),
+        array('Ce mois-ci', ucfirst($mNom[(int) date('n', $now)]) . ' ' . date('Y', $now), $P['mois'], 'à ce jour',
+              ucfirst($mNom[(int) date('n', $now)]) . ' ' . $an1, 'au même moment', 'sur le mois'),
+        array('Depuis le 1er janvier', 'année ' . date('Y', $now), $P['annee'], 'à ce jour',
+              'Année ' . $an1, 'à la même date', 'sur l\'année'),
+    );
+    $refNom = $jSem[(int) date('N', $now)] . 's';
+    ?>
+    <style>
+    .ac h2{border:0;margin:0;padding:0;font-size:26px;letter-spacing:-.02em}
+    .ac h3{margin:0 0 4px;font-size:15px;font-weight:650}
+    .ac-tete{margin:22px 0 16px} .ac-tete p,.ac-sous{margin:4px 0 0;color:#52514e;font-size:13px}
+    .ac-cartes{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+    .ac-carte{background:#fff;border:1px solid rgba(11,11,11,.08);border-radius:16px;padding:18px 20px;box-shadow:0 1px 2px rgba(16,24,40,.04),0 4px 14px rgba(16,24,40,.04)}
+    .ac-carte.ac-une{background:linear-gradient(135deg,#0d2350 0%,#173f9e 60%,#1f5eff 100%);color:#fff;border:0;box-shadow:0 12px 30px rgba(23,63,158,.25)}
+    .ac-lib{font-size:14px;font-weight:650} .ac-date{font-size:12px;color:#898781;margin-top:2px}
+    .ac-une .ac-date,.ac-une .ac-n1,.ac-une .ac-ligne{color:rgba(255,255,255,.85)}
+    .ac-val{font-size:40px;font-weight:700;letter-spacing:-.03em;line-height:1.1;margin:12px 0 2px}
+    .ac-val small{font-size:14px;font-weight:500;letter-spacing:0;opacity:.75}
+    .ac-ligne{font-size:14px;color:#0b0b0b;margin:4px 0 10px}
+    .ac-n1{font-size:12px;color:#52514e;line-height:1.6;border-top:1px solid rgba(11,11,11,.08);padding-top:10px;margin-top:10px}
+    .ac-une .ac-n1{border-top-color:rgba(255,255,255,.2)}
+    .ac-evol{display:inline-block;font-size:12px;font-weight:650;padding:3px 10px;border-radius:999px;background:#f3f5f9;margin-top:8px}
+    .ac-une .ac-evol{background:#fff}
+    .ac-bon{color:#006300} .ac-mauvais{color:#d03b3b}
+    .ac-graphes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:16px}
+    .ac-graph{position:relative;height:300px;margin-top:12px}
+    .ac-pied{margin-top:14px;font-size:12px;color:#898781}
+    @media (max-width:1100px){.ac-cartes{grid-template-columns:repeat(2,minmax(0,1fr))}.ac-graphes{grid-template-columns:minmax(0,1fr)}}
+    @media (max-width:600px){.ac-cartes{grid-template-columns:minmax(0,1fr)}}
+    </style>
+
+    <div class="ac">
+        <div class="ac-tete">
+            <h2>Activité</h2>
+            <p>Contrats validés (statut V), à la date de souscription · mis à jour à <?php echo $heure; ?>, actualisation automatique toutes les 5 minutes</p>
+        </div>
+
+        <div class="ac-cartes">
+        <?php foreach ($cartes as $i => $c): $v = $c[2]; $annee = $v['prevision'] === null; ?>
+            <div class="ac-carte<?php echo $i === 0 ? ' ac-une' : ''; ?>">
+                <div class="ac-lib"><?php echo h($c[0]); ?></div>
+                <div class="ac-date"><?php echo h($c[1]); ?></div>
+                <?php if ($annee): ?>
+                    <div class="ac-val"><?php echo $nbTxt($v['reel']); ?> <small>contrat<?php echo $s($v['reel']); ?></small></div>
+                    <div class="ac-ligne">réalisé<?php echo $s($v['reel']); ?> <?php echo h($c[3]); ?></div>
+                    <?php echo $evol($v['reel'], $v['n1Moment'], 'vs ' . $an1 . ' à la même date'); ?>
+                <?php else: ?>
+                    <div class="ac-val"><?php echo $nbTxt($v['prevision']); ?> <small>contrat<?php echo $s($v['prevision']); ?> prévu<?php echo $s($v['prevision']); ?></small></div>
+                    <div class="ac-ligne"><strong><?php echo $nbTxt($v['reel']); ?></strong> réalisé<?php echo $s($v['reel']); ?> <?php echo h($c[3]); ?></div>
+                    <?php echo $evol($v['prevision'], $v['n1Total'], 'vs ' . $an1); ?>
+                <?php endif; ?>
+                <div class="ac-n1"><?php echo h($c[4]); ?> :<br>
+                    <strong><?php echo $nbTxt($v['n1Moment']); ?></strong> <?php echo h($c[5]); ?> · <strong><?php echo $nbTxt($v['n1Total']); ?></strong> <?php echo h($c[6]); ?></div>
+            </div>
+        <?php endforeach; ?>
+        </div>
+
+        <div class="ac-graphes">
+            <?php if ($A['avecHeure']): ?>
+            <section class="ac-carte">
+                <h3>Aujourd'hui, heure par heure</h3>
+                <p class="ac-sous">Contrats cumulés depuis minuit</p>
+                <div class="ac-graph"><canvas id="acHeures" role="img" aria-label="Contrats cumulés aujourd'hui heure par heure, comparés à un jour habituel et à l'an dernier"></canvas></div>
+            </section>
+            <?php endif; ?>
+            <section class="ac-carte">
+                <h3><?php echo h(ucfirst($mNom[(int) date('n', $now)])); ?>, jour par jour</h3>
+                <p class="ac-sous">Contrats cumulés depuis le 1er du mois</p>
+                <div class="ac-graph"><canvas id="acMois" role="img" aria-label="Contrats cumulés du mois, réel puis prévision, comparés au même mois l'an dernier"></canvas></div>
+            </section>
+        </div>
+
+        <p class="ac-pied">Prévision : ce qui est déjà fait + ce qui se fait d'habitude ensuite (moyenne des <?php echo ACT_REF; ?> derniers <?php echo h($refNom); ?> pour aujourd'hui,
+            et des <?php echo ACT_REF; ?> derniers jours identiques pour les jours suivants)<?php echo $A['avecHeure'] ? ', ajusté au rythme de la journée' : ''; ?>.
+            L'an dernier : même jour de la semaine il y a 52 semaines, même mois civil pour le mois et l'année.</p>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script>
+    (function () {
+        var H = <?php echo json_encode($A['heures']); ?>, M = <?php echo json_encode($A['mois']); ?>;
+        var BLEU = '#2a78d6', ORANGE = '#eb6834', GRIS = '#a8a69e';
+        Chart.defaults.font.family = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+        Chart.defaults.color = '#898781';
+        var tip = { backgroundColor: '#fff', titleColor: '#52514e', bodyColor: '#0b0b0b', borderColor: 'rgba(11,11,11,.12)', borderWidth: 1, padding: 10,
+                    filter: function (it) { return it.raw !== null && it.parsed.y !== null; } };
+        var legende = { position: 'bottom', labels: { usePointStyle: true, pointStyle: 'line', boxWidth: 18 } };
+        var ligne = function (label, data, coul, pointille, epais) {
+            return { label: label, data: data, borderColor: coul, backgroundColor: coul, borderWidth: epais || 2, borderDash: pointille ? [6, 5] : [],
+                     pointRadius: 0, pointHoverRadius: 4, tension: 0.2, spanGaps: false };
+        };
+        var axeY = { beginAtZero: true, border: { display: false }, grid: { color: '#e1e0d9' }, ticks: { precision: 0 } };
+        if (document.getElementById('acHeures')) {
+            new Chart(document.getElementById('acHeures'), {
+                type: 'line',
+                data: { datasets: [
+                    ligne('Aujourd\'hui', H.reel, BLEU, false, 2.5),
+                    ligne('Prévision', H.prevision, BLEU, true),
+                    ligne(<?php echo json_encode(ucfirst($jSem[(int) date('N', $now)]) . ' habituel'); ?>, H.habituel, GRIS),
+                    ligne(<?php echo json_encode('Un an avant'); ?>, H.n1, ORANGE)
+                ] },
+                options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'nearest', axis: 'x', intersect: false },
+                    plugins: { legend: legende, tooltip: Object.assign({}, tip, { callbacks: {
+                        title: function (it) { var x = it[0].parsed.x, h = Math.floor(x), m = Math.round((x - h) * 60); return h + 'h' + (m ? String(m).padStart(2, '0') : ''); },
+                        label: function (c) { return ' ' + c.dataset.label + ' : ' + Math.round(c.parsed.y); } } }) },
+                    scales: { x: { type: 'linear', min: 0, max: 24, grid: { display: false }, border: { color: '#c3c2b7' },
+                                   ticks: { stepSize: 3, callback: function (v) { return v + 'h'; } } }, y: axeY } }
+            });
+        }
+        new Chart(document.getElementById('acMois'), {
+            type: 'line',
+            data: { labels: M.labels, datasets: [
+                ligne('Réel', M.reel, BLEU, false, 2.5),
+                ligne('Prévision', M.prevision, BLEU, true),
+                ligne(<?php echo json_encode(ucfirst($mNom[(int) date('n', $now)]) . ' ' . $an1); ?>, M.n1, ORANGE)
+            ] },
+            options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+                plugins: { legend: legende, tooltip: Object.assign({}, tip, { callbacks: {
+                    title: function (it) { return 'Le ' + it[0].label; },
+                    label: function (c) { return ' ' + c.dataset.label + ' : ' + Math.round(c.parsed.y); } } }) },
+                scales: { x: { grid: { display: false }, border: { color: '#c3c2b7' }, ticks: { autoSkip: true, maxTicksLimit: 16 } }, y: axeY } }
+        });
+        // Actualisation automatique toutes les 5 minutes, seulement si l'onglet est visible.
+        setInterval(function () { if (!document.hidden) { location.reload(); } }, 300000);
+    })();
+    </script>
     </body></html>
     <?php
     exit;
