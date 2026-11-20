@@ -123,6 +123,9 @@ function css() {
       . 'form.cfg{background:#fff;border:1px solid #dde3ee;border-radius:8px;padding:20px;max-width:420px}'
       . 'form.cfg label{display:block;margin-bottom:14px;font-weight:600} form.cfg input{width:100%;padding:9px 11px;border:1px solid #ccd4e2;border-radius:6px;font:inherit;font-weight:400;box-sizing:border-box}'
       . 'form.cfg button{background:#1f5eff;color:#fff;border:0;padding:10px 18px;border-radius:6px;font:inherit;cursor:pointer}'
+      . '.soc-mobile{display:none}'
+      . '@media (max-width:700px){.soc-large{display:none}.soc-mobile{display:block;margin:8px 0;color:#888;font-size:14px}'
+      . '.soc-mobile summary{cursor:pointer;font-weight:600}.soc-mobile p{margin:6px 0 0;font-size:13px;line-height:1.6}}'
       . 'a{color:#1f5eff} .tools{font-size:13px;color:#888;margin-top:30px}';
 }
 
@@ -279,7 +282,14 @@ foreach ($apporteurs as $a) {
     );
     if (!in_array($soc, $societes, true)) { $societes[] = $soc; }
 }
-echo '<p class="muted">Sociétés : <strong>' . h(implode(' · ', $societes)) . '</strong></p>';
+// Sociétés : liste complète sur ordinateur ; sur téléphone, repliée en « Sociétés (N) » (un appui la déplie).
+$listeSoc = h(implode(' · ', $societes));
+if (count($societes) <= 1) {
+    echo '<p class="muted">Société : <strong>' . $listeSoc . '</strong></p>';
+} else {
+    echo '<p class="muted soc-large">Sociétés : <strong>' . $listeSoc . '</strong></p>'
+       . '<details class="soc-mobile"><summary>Sociétés (' . count($societes) . ')</summary><p class="muted">' . $listeSoc . '</p></details>';
+}
 
 // Vue courante (BI)
 $vue = isset($_GET['vue']) ? $_GET['vue'] : 'bordereau';
